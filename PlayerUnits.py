@@ -112,14 +112,16 @@ class LoiteringMunition(UAV):
         isHit(self, target)
 
 
-def calculateChanceToDestroy(attacker: LoiteringMunition, attacked: Unit):
+def calculateChanceToDestroy(attacker: UAV, attacked: Unit):
+    if isinstance(attacker, LoiteringMunition) or isinstance(attacker, CombatUAV):
         return ExplosiveArmourTable[attacked.armourType.value][attacker.explosiveType.value]
 
-def isHit(attacker: LoiteringMunition, attacked: Unit):
+def isHit(attacker: UAV, attacked: Unit):
     calculated = random.randint(1,100)
     if calculated <= attacker.chanceToHit + calculateChanceToDestroy(attacker, attacked):
         attacked.state = UnitState.Destroyed
-    attacker.state = UnitState.Destroyed
+    if isinstance(attacker, LoiteringMunition):
+        attacker.state = UnitState.Destroyed
 
 class RetransmiterUAV(UAV):
 
@@ -133,5 +135,6 @@ class LogisticUAV(UAV):
 
 class CombatUAV(UAV):
 
-    def __init__(self, currentPayload: float):
+    def __init__(self, currentPayload: float, explosiveType: ExplosiveType):
         self.currentPayload = currentPayload
+        self.explosiveType = explosiveType
