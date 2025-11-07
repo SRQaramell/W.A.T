@@ -19,6 +19,7 @@ class UnitState(Enum):
     Damaged = 3
     Moving = 4
     Landed = 5
+    Active = 6
 
 class ExplosiveType(Enum):
     HE_FRAG = 0
@@ -108,6 +109,7 @@ class LoiteringMunition(UAV):
         self.explosiveType = explosiveType
 
     def attack(self, target: Unit):
+        isHit(self, target)
 
 
 def calculateChanceToDestroy(attacker: LoiteringMunition, attacked: Unit):
@@ -118,3 +120,18 @@ def isHit(attacker: LoiteringMunition, attacked: Unit):
     if calculated <= attacker.chanceToHit + calculateChanceToDestroy(attacker, attacked):
         attacked.state = UnitState.Destroyed
     attacker.state = UnitState.Destroyed
+
+class RetransmiterUAV(UAV):
+
+    def __init__(self, retransmisionRange: float):
+        self.retransmisionRange = retransmisionRange
+
+class LogisticUAV(UAV):
+
+    def __init__(self, currentPayload: float):
+        self.currentPayload = currentPayload
+
+class CombatUAV(UAV):
+
+    def __init__(self, currentPayload: float):
+        self.currentPayload = currentPayload
