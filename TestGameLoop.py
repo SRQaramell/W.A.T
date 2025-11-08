@@ -783,17 +783,9 @@ PAGE_TMPL = """
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
-          for (const u of units) {
-            const size = u.size || 24;
-            const half = size / 2;
-        
-            const isFriendly = u.player === localPlayer;
-            const isVisible = isFriendly || isPosVisible(u.x, u.y, visionCircles);
-        
-            // if not visible -> skip drawing this unit
-            if (!isVisible) {
-              continue;
-            }
+      for (const u of units) {
+        const size = u.size || 24;
+        const half = size / 2;
 
         if (u.destination && Array.isArray(u.destination) && u.destination.length === 2) {
           const [dx, dy] = u.destination;
@@ -898,6 +890,7 @@ PAGE_TMPL = """
           ctx.lineWidth = 2;
           ctx.stroke();
         }
+        
       }
 
       if (moveTarget) {
