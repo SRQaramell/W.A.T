@@ -15,18 +15,32 @@ class AntennaModel:
     name: str
     lat: float
     lng: float
-    height: float      # wysokość n.p.m. (metry)
+    height: float
     radius: float
     battery: float
-    category: int      # 2/3/4/5 (G)
+    category: int
 
 ANTENNAS: List[AntennaModel] = []
 _id_counter = itertools.count(1)
 
 # ======= WIDOK FRONTU =======
+@app.get("/index")
+@app.get("/menu")
+def main_menu():
+    return render_template("index.html")
+
+# Możesz też przekierować "/" na menu:
 @app.get("/")
-def index():
+def home_redirect():
+    return render_template("index.html")
+
+# I dodać osobny widok dla mapy:
+@app.get("/map")
+def map_view():
     return render_template("map.html")
+@app.get("/settings")
+def settings_view():
+    return render_template("settings.html")  # nazwa pliku w templates/
 
 # ======= API =======
 @app.get("/api/antennas")
@@ -65,6 +79,7 @@ def create_antenna():
         category=category
     )
     ANTENNAS.append(antenna)
+    print("created antenna:", ANTENNAS)
     return jsonify(asdict(antenna)), 201
 
 @app.delete("/api/antennas/<int:antenna_id>")

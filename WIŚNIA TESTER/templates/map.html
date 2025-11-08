@@ -3,37 +3,27 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mapa – Anteny</title>
+  <title>Mapa – Baza z limitem anten</title>
 
   <!-- Leaflet -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
   <style>
     html, body, #map { height: 100%; margin: 0; }
 
-    /* Toolbar */
-    .toolbar {
+    .toolbar, .basebar {
       display: flex; gap: 8px; align-items: center;
       background: white; padding: 6px; border-radius: 10px;
       box-shadow: 0 2px 8px rgba(0,0,0,.2);
     }
-    .add-antenna-btn {
+    .btn {
       width: 44px; height: 44px; line-height: 44px;
       border: none; border-radius: 10px;
       background: white; box-shadow: 0 2px 8px rgba(0,0,0,.2);
       font-size: 24px; font-weight: 700; cursor: pointer;
     }
-    .add-antenna-btn.active { background: #e6f7ff; outline: 2px solid #91d5ff }
+    .btn.active { background: #e6f7ff; outline: 2px solid #91d5ff }
     .cursor-crosshair { cursor: crosshair !important }
 
     /* Ikony anten */
@@ -47,21 +37,32 @@
       text-shadow: 0 1px 1px rgba(0,0,0,.35);
       user-select: none;
     }
-    .g2 { background: #6b7280; }  /* szary */
-    .g3 { background: #2563eb; }  /* niebieski */
-    .g4 { background: #16a34a; }  /* zielony */
-    .g5 { background: #dc2626; }  /* czerwony */
+    .g2 { background: #6b7280; }
+    .g3 { background: #2563eb; }
+    .g4 { background: #16a34a; }
+    .g5 { background: #dc2626; }
+
+    /* Baza */
+    .base-icon {
+      transform: translate(-50%, -100%);
+      background: #111827; color: #fff;
+      width: 38px; height: 38px; border-radius: 8px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 2px solid rgba(0,0,0,.25);
+      box-shadow: 0 1px 4px rgba(0,0,0,.2);
+      font: 800 12px/1 system-ui, sans-serif;
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
   <script>
-    // --- Inicjalizacja mapy (odblokowana) ---
+    // --- Mapa ---
     const map = L.map('map', {
-      center: [51.1079, 17.0385], // start: Wrocław
-      zoom: 7,                     // szeroki widok
-      zoomControl: true,           // przyciski +/-
+      center: [51.1079, 17.0385],
+      zoom: 7,
+      zoomControl: true,
       scrollWheelZoom: true,
       doubleClickZoom: true,
       boxZoom: true,
@@ -70,16 +71,15 @@
       dragging: true
     });
 
-    // Warstwa OSM
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      minZoom: 2,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/">OSM</a>'
+      maxZoom: 19, minZoom: 2,
+      attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
     const antennasLayer = L.layerGroup().addTo(map);
+    const baseLayer = L.layerGroup().addTo(map);
 
-    // --- Fabryka ikon anten (2G–5G) ---
+    // --- Ikony ---
     function iconForCategory(category) {
       const g = Number(category);
       const cls = g === 2 ? 'g2' : g === 3 ? 'g3' : g === 4 ? 'g4' : 'g5';
@@ -92,6 +92,10 @@
         popupAnchor: [0, -34]
       });
     }
+    const baseIcon = L.divIcon({
+      className: 'base-icon', html: 'BASE',
+      iconSize: [38, 38], iconAnchor: [19, 38], popupAnchor: [0, -38]
+    });
 
     // --- Klasa Antenna ---
     class Antenna {
@@ -106,13 +110,10 @@
 
         this.marker = L.marker(this.latlng, { icon: iconForCategory(this.category) })
           .bindPopup(this._popupHtml());
-
         this.circle = L.circle(this.latlng, { radius: this.radius, fillOpacity: 0.15 });
         this.group = L.layerGroup([this.marker, this.circle]).addTo(antennasLayer);
-
         this._attachHandlers();
       }
-
       _popupHtml() {
         const { lat, lng } = this.latlng;
         return `
@@ -125,7 +126,6 @@
           <button data-action="delete" style="margin-top:6px">Usuń</button>
         `;
       }
-
       _attachHandlers() {
         this.marker.on('popupopen', (e) => {
           const btn = e.popup.getElement().querySelector('button[data-action="delete"]');
@@ -137,15 +137,13 @@
       }
     }
 
-    // --- API helpers ---
+    // --- API ---
     async function apiGetAntennas() {
-      const r = await fetch('/api/antennas');
-      return r.json();
+      const r = await fetch('/api/antennas'); return r.json();
     }
     async function apiCreateAntenna(payload) {
       const r = await fetch('/api/antennas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if (!r.ok) throw new Error('POST /api/antennas failed');
@@ -155,21 +153,18 @@
       const r = await fetch('/api/antennas/' + id, { method: 'DELETE' });
       return r.status === 204;
     }
-
     async function loadAntennas() {
       const data = await apiGetAntennas();
       antennasLayer.clearLayers();
       data.forEach(a => new Antenna(a));
     }
 
-    // --- Toolbar: wybór typu i przycisk "+"
+    // --- Toolbar: dodawanie pojedynczych anten („+”) ---
     let selectedCategory = 5;
-
     const ToolbarControl = L.Control.extend({
       options: { position: 'bottomright' },
       onAdd: function() {
         const wrap = L.DomUtil.create('div', 'toolbar');
-
         const select = L.DomUtil.create('select', '', wrap);
         ['2','3','4','5'].forEach(g => {
           const opt = document.createElement('option');
@@ -179,48 +174,192 @@
         });
         select.onchange = () => { selectedCategory = Number(select.value); };
 
-        const btn = L.DomUtil.create('button', 'add-antenna-btn', wrap);
+        const btn = L.DomUtil.create('button', 'btn add-antenna-btn', wrap);
         btn.textContent = '+';
-        btn.title = 'Tryb dodawania anten';
-
+        btn.title = 'Tryb dodawania (pojedyncze)';
         L.DomEvent.disableClickPropagation(wrap);
         L.DomEvent.disableScrollPropagation(wrap);
         L.DomEvent.on(btn, 'click', () => toggleAddMode(btn));
-
         return wrap;
       }
     });
     map.addControl(new ToolbarControl());
 
-    // --- Tryb dodawania anten ---
     let addMode = false;
     function toggleAddMode(btn) {
       addMode = !addMode;
+      // tryb bazy nie może być aktywny jednocześnie
+      stopBasePlacementMode();
+      stopBaseSeriesMode();
       btn.classList.toggle('active', addMode);
       document.getElementById('map').classList.toggle('cursor-crosshair', addMode);
       if (addMode) map.on('click', handleAddClick);
       else map.off('click', handleAddClick);
     }
-
     async function handleAddClick(e) {
-      const payload = {
-        lat: e.latlng.lat,
-        lng: e.latlng.lng,
-        radius: 300,
-        category: selectedCategory,
-        battery: 100
-      };
-      try {
-        const saved = await apiCreateAntenna(payload);
-        new Antenna(saved);
-      } catch (err) {
-        console.error(err);
-        alert('Nie udało się dodać anteny.');
+      await placeOneAntenna(e.latlng.lat, e.latlng.lng, selectedCategory);
+    }
+    async function placeOneAntenna(lat, lng, category) {
+      const payload = { lat, lng, radius: 300, category, battery: 100 };
+      try { const saved = await apiCreateAntenna(payload); new Antenna(saved); }
+      catch (err) { console.error(err); alert('Nie udało się dodać anteny.'); }
+    }
+
+    // --- BAZA: stawianie + popup z konfiguracją i limitem 5 ---
+    let baseControlInstance = null;
+    let baseMarker = null;
+    const baseState = {
+      remaining: 5,        // magazyn maks 5
+      seriesActive: false, // czy kliknięcia mapy dodają anteny z bazy
+      category: 5          // wybrana kategoria w popupie
+    };
+
+    const BaseControl = L.Control.extend({
+      options: { position: 'bottomleft' },
+      onAdd: function() {
+        const wrap = L.DomUtil.create('div', 'basebar');
+        const btn = L.DomUtil.create('button', 'btn add-base-btn', wrap);
+        btn.textContent = 'B';
+        btn.title = 'Postaw bazę';
+        L.DomEvent.disableClickPropagation(wrap);
+        L.DomEvent.disableScrollPropagation(wrap);
+        L.DomEvent.on(btn, 'click', () => toggleBasePlacementMode(btn));
+        return wrap;
       }
+    });
+    function addBaseControl() { if (!baseControlInstance) { baseControlInstance = new BaseControl(); map.addControl(baseControlInstance); } }
+    function removeBaseControl() { if (baseControlInstance) { map.removeControl(baseControlInstance); baseControlInstance = null; } }
+
+    let basePlaceMode = false;
+    function toggleBasePlacementMode(btn) {
+      basePlaceMode = !basePlaceMode;
+      // wyłącz inne tryby
+      if (addMode) toggleAddMode(document.querySelector('.add-antenna-btn'));
+      stopBaseSeriesMode();
+      btn.classList.toggle('active', basePlaceMode);
+      document.getElementById('map').classList.toggle('cursor-crosshair', basePlaceMode);
+      if (basePlaceMode) map.on('click', handlePlaceBase);
+      else map.off('click', handlePlaceBase);
+    }
+    function stopBasePlacementMode() {
+      if (!basePlaceMode) return;
+      const btn = document.querySelector('.add-base-btn');
+      if (btn) btn.classList.remove('active');
+      basePlaceMode = false;
+      document.getElementById('map').classList.remove('cursor-crosshair');
+      map.off('click', handlePlaceBase);
+    }
+    function handlePlaceBase(e) {
+      baseMarker = L.marker(e.latlng, { icon: baseIcon }).addTo(baseLayer);
+      // blokujemy dalsze stawianie bazy i ukrywamy przycisk
+      stopBasePlacementMode();
+      removeBaseControl();
+      // reset stanu magazynu
+      baseState.remaining = 5;
+      baseState.seriesActive = false;
+      baseState.category = 5;
+
+      // popup bazy: konfiguracja i status
+      baseMarker.bindPopup(renderBasePopup(), { closeOnClick: false }).openPopup();
+      attachBasePopupHandlers();
+      // kliknięcie bazy zawsze otwiera popup
+      baseMarker.on('click', () => {
+        baseMarker.openPopup();
+        baseMarker.setPopupContent(renderBasePopup());
+
+        attachBasePopupHandlers();
+      });
+    }
+
+    function renderBasePopup() {
+      const disabled = baseState.remaining <= 0 ? 'disabled' : '';
+      const hint = baseState.seriesActive
+        ? `<div style="margin-top:6px;color:#0a7">Tryb aktywny: klikaj na mapę, aby dodać anteny.</div>`
+        : `<div style="margin-top:6px;color:#555">Po aktywacji każde kliknięcie mapy doda 1 antenę aż do wyczerpania magazynu.</div>`;
+      return `
+        <b>Baza</b><br/>
+        Pozostało: <b>${baseState.remaining}</b> / 5 anten<br/>
+        <label style="display:block;margin-top:6px;">
+          Kategoria:
+          <select id="baseCategory" ${disabled}>
+            <option value="2" ${baseState.category===2?'selected':''}>2G</option>
+            <option value="3" ${baseState.category===3?'selected':''}>3G</option>
+            <option value="4" ${baseState.category===4?'selected':''}>4G</option>
+            <option value="5" ${baseState.category===5?'selected':''}>5G</option>
+          </select>
+        </label>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="baseStart" ${disabled}>${baseState.seriesActive?'Zatrzymaj':'Aktywuj'}</button>
+          <button id="baseReset">Reset (5)</button>
+        </div>
+        ${hint}
+      `;
+    }
+
+    function attachBasePopupHandlers() {
+      const popupEl = baseMarker.getPopup()?.getElement();
+      if (!popupEl) return;
+
+      const sel = popupEl.querySelector('#baseCategory');
+      if (sel) sel.onchange = () => { baseState.category = Number(sel.value); };
+
+      const startBtn = popupEl.querySelector('#baseStart');
+      if (startBtn) startBtn.onclick = () => {
+        if (baseState.seriesActive) {
+          stopBaseSeriesMode();
+        } else {
+          startBaseSeriesMode();
+        }
+        // odśwież popup
+        baseMarker.setPopupContent(renderBasePopup());
+        attachBasePopupHandlers();
+      };
+
+      const resetBtn = popupEl.querySelector('#baseReset');
+      if (resetBtn) resetBtn.onclick = () => {
+        baseState.remaining = 5;
+        stopBaseSeriesMode();
+        baseMarker.setPopupContent(renderBasePopup());
+        attachBasePopupHandlers();
+      };
+    }
+
+    function startBaseSeriesMode() {
+      if (baseState.remaining <= 0) return;
+      // wyłącz inne tryby
+      if (addMode) toggleAddMode(document.querySelector('.add-antenna-btn'));
+      baseState.seriesActive = true;
+      document.getElementById('map').classList.add('cursor-crosshair');
+      map.on('click', handleBaseSeriesClick);
+    }
+    function stopBaseSeriesMode() {
+      if (!baseState.seriesActive) return;
+      baseState.seriesActive = false;
+      document.getElementById('map').classList.remove('cursor-crosshair');
+      map.off('click', handleBaseSeriesClick);
+    }
+    async function handleBaseSeriesClick(e) {
+      if (!baseState.seriesActive || baseState.remaining <= 0) {
+        stopBaseSeriesMode();
+        baseMarker.setPopupContent(renderBasePopup());
+        attachBasePopupHandlers();
+        return;
+      }
+      // postaw 1 antenę z magazynu bazy
+      await placeOneAntenna(e.latlng.lat, e.latlng.lng, baseState.category);
+      baseState.remaining -= 1;
+
+      if (baseState.remaining <= 0) {
+        stopBaseSeriesMode();
+      }
+      // odśwież popup, aby pokazać pozostałą liczbę
+      baseMarker.setPopupContent(renderBasePopup());
+      attachBasePopupHandlers();
     }
 
     // Start
     loadAntennas();
+    addBaseControl();
   </script>
 </body>
 </html>
