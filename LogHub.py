@@ -12,10 +12,12 @@ class GroundStructure:
 
 class LogHub(GroundStructure):
 
-    def __init__(self, name: str, position: (int,int), image: str, player: int, transmissionRange: int, max_retransmitters: int = 3):
+    def __init__(self, name: str, position: (int,int), image: str, player: int, transmissionRange: int, max_retransmitters: int = 3, max_uavs: int = 5):
         super().__init__(name, position, image, player)
         self.transmissionRange = transmissionRange
         self.available_retransmitters = max_retransmitters
+        self.max_deployed_uavs = max_uavs
+        self.current_spawned_uavs = 0
 
 
 class GroundRetransmitter(GroundStructure):

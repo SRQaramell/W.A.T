@@ -16,7 +16,6 @@ TICK_RATE = 10
 PLAYER1 = 1
 ATTACK_RANGE = 3
 
-# --- HTML PAGE ---
 PAGE_TMPL = """
 <!DOCTYPE html>
 <html lang="en">
@@ -53,9 +52,38 @@ PAGE_TMPL = """
     #infoPanel li {
       margin-bottom: 4px;
     }
+    /* NEW: overlay controls */
+    #overlayMenu {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: rgba(255,255,255,0.9);
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-family: sans-serif;
+      font-size: 13px;
+      z-index: 999;
+    }
+    #overlayMenu label {
+      display: block;
+      margin-bottom: 4px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
+  <div id="overlayMenu">
+    <label>
+      <input type="checkbox" id="chkTransmission" checked>
+      Show transmission zones
+    </label>
+    <label>
+      <input type="checkbox" id="chkEnemyAA" checked>
+      Show enemy AA ranges
+    </label>
+  </div>
+
   <canvas id="canvas" width="800" height="600"></canvas>
   <div id="infoPanel">
     <h2>Selected Unit Info</h2>
@@ -67,9 +95,30 @@ PAGE_TMPL = """
     const ctx = canvas.getContext("2d");
     const infoPanel = document.getElementById("unitInfo");
 
+    // NEW: visibility flags
+    let showTransmission = true;
+    let showEnemyAA = true;
+
+    // assume local player is 1 (server also uses PLAYER1 = 1)
+    const localPlayer = 1;
+
+    const chkTransmission = document.getElementById("chkTransmission");
+    const chkEnemyAA = document.getElementById("chkEnemyAA");
+
+    chkTransmission.addEventListener("change", () => {
+      showTransmission = chkTransmission.checked;
+    });
+    chkEnemyAA.addEventListener("change", () => {
+      showEnemyAA = chkEnemyAA.checked;
+    });
+
     let placeRetransmitterMode = false;
     let placingBaseId = null;
     let placingBaseData = null;
+    
+    let spawnUavMode = false;
+    let spawnUavBaseId = null;
+    let spawnUavBaseData = null;
 
     let units = [];             // will be fetched from server
     let selectedUnitId = null;
@@ -82,6 +131,12 @@ PAGE_TMPL = """
       placingBaseData = baseData;
     }
 
+    function startUavSpawn(baseId, baseData) {
+      spawnUavMode = true;
+      spawnUavBaseId = baseId;
+      spawnUavBaseData = baseData;
+    }
+
     function makeUnitSnapshot(u) {
       const snap = {
         id: u.id,
@@ -92,15 +147,12 @@ PAGE_TMPL = """
         x: u.x,
         y: u.y
       };
-    
-      // bases (LogHub) have this and we want panel to refresh when it changes
       if (u.unit_class === "LogHub") {
         snap.available_retransmitters = u.available_retransmitters;
       }
-    
       return snap;
     }
-    
+
     function isSameUnitSnapshot(a, b) {
       let same =
         a.id === b.id &&
@@ -110,39 +162,30 @@ PAGE_TMPL = """
         a.transmissionRange === b.transmissionRange &&
         a.x === b.x &&
         a.y === b.y;
-    
-      // for bases, also check available_retransmitters
       if (a.unit_class === "LogHub") {
         same = same && a.available_retransmitters === b.available_retransmitters;
       }
-    
       return same;
     }
-
 
     function fetchUnits() {
       fetch("/units")
         .then(res => res.json())
         .then(data => {
           units = data;
-    
-          // recreate images
           units.forEach(u => {
             const img = new Image();
             img.src = u.image;
             u._img = img;
           });
-    
           if (selectedUnitId !== null) {
             const selected = units.find(u => u.id === selectedUnitId);
             if (selected) {
               if (!selectedUnitSnapshot || !isSameUnitSnapshot(selectedUnitSnapshot, selected)) {
                 updateInfoPanel(selected);
-                // store fresh snapshot (only fields we care about)
                 selectedUnitSnapshot = makeUnitSnapshot(selected);
               }
             } else {
-              // selected unit disappeared
               infoPanel.innerHTML = "No unit selected.";
               selectedUnitId = null;
               selectedUnitSnapshot = null;
@@ -153,135 +196,166 @@ PAGE_TMPL = """
         .catch(err => console.error("Failed to fetch units:", err));
     }
 
-        canvas.addEventListener("click", (event) => {
-          const rect = canvas.getBoundingClientRect();
-          const scaleX = canvas.width / rect.width;
-          const scaleY = canvas.height / rect.height;
-        
-          const clickX = (event.clientX - rect.left) * scaleX;
-          const clickY = (event.clientY - rect.top)  * scaleY;
+    canvas.addEventListener("click", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
 
-          // 0. placing retransmitter?
-          if (placeRetransmitterMode && placingBaseId !== null) {
-            // optional client-side check to give faster feedback
-            if (placingBaseData && placingBaseData.transmissionRange) {
-              const dx = clickX - placingBaseData.x;
-              const dy = clickY - placingBaseData.y;
-              const dist = Math.sqrt(dx*dx + dy*dy);
-              if (dist > placingBaseData.transmissionRange) {
-                alert("Spot outside base transmission range");
-                return;
-              }
-            }
-        
-            fetch("/place_retransmitter", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                base_id: placingBaseId,
-                x: clickX,
-                y: clickY
-              })
-            })
-            .then(res => res.json())
-            .then(d => {
-              if (d.status === "ok") {
-                placeRetransmitterMode = false;
-                const baseId = placingBaseId;
-                placingBaseId = null;
-                placingBaseData = null;
-                fetchUnits().then((unitsNow) => {
-                    const baseNow = units.find(u => u.id === baseId);
-                    if (baseNow) {
-                        updateInfoPanel(baseNow);
-                        // keep snapshot in sync if you use snapshot logic
-                        selectedUnitSnapshot = makeUnitSnapshot(baseNow);
-                    }
-                });
-                // try to uncheck the box if the same base is still shown
-                const chk = document.getElementById("placeRtChk");
-                const hint = document.getElementById("placeHint");
-                if (chk) chk.checked = false;
-                if (hint) hint.textContent = "";
-              } else {
-                alert(d.message || "Error placing retransmitter");
-              }
-            })
-            .catch(err => console.error(err));
-        
-            return; // stop normal click handling
-          }
-        
-          // 1. did we click on a unit?
-          let clickedUnit = null;
-          for (const u of units) {
-            const size = u.size || 24;
-            const half = size / 2;
-            if (clickX >= u.x - half && clickX <= u.x + half &&
-                clickY >= u.y - half && clickY <= u.y + half) {
-              clickedUnit = u;
-              break;
-            }
-          }
-        
-          // we have a selected unit already?
-          const selected = selectedUnitId !== null
-              ? units.find(u => u.id === selectedUnitId)
-              : null;
-        
-          // 2. Ctrl+click on enemy unit -> attack (only if selected is LoiteringMunition)
-          if (clickedUnit && event.ctrlKey && selected &&
-              selected.unit_class === "LoiteringMunition" &&
-              clickedUnit.player !== selected.player) {
-        
-            fetch("/attack_unit", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                attacker_id: selected.id,
-                target_id: clickedUnit.id
-              })
-            })
-            .then(res => res.json())
-            .then(d => {
-              // refresh after attack
-              fetchUnits();
-            })
-            .catch(err => console.error(err));
-        
-            return; // stop here – attack handled
-          }
-        
-          // 3. if we clicked a unit (no ctrl or not enemy / not LM) -> just select it
-          if (clickedUnit) {
-            selectedUnitId = clickedUnit.id;
-            moveTarget = null;
-            updateInfoPanel(clickedUnit);
+      const clickX = (event.clientX - rect.left) * scaleX;
+      const clickY = (event.clientY - rect.top)  * scaleY;
+
+      // 0. placing retransmitter?
+      if (placeRetransmitterMode && placingBaseId !== null) {
+        if (placingBaseData && placingBaseData.transmissionRange) {
+          const dx = clickX - placingBaseData.x;
+          const dy = clickY - placingBaseData.y;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if (dist > placingBaseData.transmissionRange) {
+            alert("Spot outside base transmission range");
             return;
           }
-        
-          // 4. click on empty ground -> move (only if something selected)
-          if (selectedUnitId !== null) {
-            fetch("/move_unit", {
-              method: "POST",
-              headers:  { "Content-Type": "application/json" },
-              body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
-            })
-            .then(res => res.json())
-            .then(data => {
-              fetchUnits();
-            })
-            .catch(err => console.error(err));
-            moveTarget = { x: clickX, y: clickY };
-          }
-        });
+        }
 
+        fetch("/place_retransmitter", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_id: placingBaseId,
+            x: clickX,
+            y: clickY
+          })
+        })
+        .then(res => res.json())
+        .then(d => {
+          if (d.status === "ok") {
+            placeRetransmitterMode = false;
+            const baseId = placingBaseId;
+            placingBaseId = null;
+            placingBaseData = null;
+            fetchUnits().then((unitsNow) => {
+                const baseNow = units.find(u => u.id === baseId);
+                if (baseNow) {
+                    updateInfoPanel(baseNow);
+                    selectedUnitSnapshot = makeUnitSnapshot(baseNow);
+                }
+            });
+            const chk = document.getElementById("placeRtChk");
+            const hint = document.getElementById("placeHint");
+            if (chk) chk.checked = false;
+            if (hint) hint.textContent = "";
+          } else {
+            alert(d.message || "Error placing retransmitter");
+          }
+        })
+        .catch(err => console.error(err));
+
+        return;
+      }
+
+      // 0b. spawning UAV from base?
+      if (spawnUavMode && spawnUavBaseId !== null) {
+        fetch("/spawn_uav", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_id: spawnUavBaseId,
+            x: clickX,
+            y: clickY
+          })
+        })
+        .then(res => res.json())
+        .then(d => {
+          if (d.status === "ok") {
+            // stop spawn mode
+            spawnUavMode = false;
+            const baseId = spawnUavBaseId;
+            spawnUavBaseId = null;
+            spawnUavBaseData = null;
+    
+            // refresh units and panel so we see updated current_spawned_uavs
+            fetchUnits().then(() => {
+              const baseNow = units.find(u => u.id === baseId);
+              if (baseNow) {
+                updateInfoPanel(baseNow);
+                selectedUnitSnapshot = makeUnitSnapshot(baseNow);
+              }
+            });
+          } else {
+            alert(d.message || "Error spawning UAV");
+          }
+        })
+        .catch(err => console.error(err));
+    
+        return;
+      }
+
+      // 1. did we click on a unit?
+      let clickedUnit = null;
+      for (const u of units) {
+        const size = u.size || 24;
+        const half = size / 2;
+        if (clickX >= u.x - half && clickX <= u.x + half &&
+            clickY >= u.y - half && clickY <= u.y + half) {
+          clickedUnit = u;
+          break;
+        }
+      }
+
+      const selected = selectedUnitId !== null
+          ? units.find(u => u.id === selectedUnitId)
+          : null;
+
+      // 2. Ctrl+click -> attack (LM vs enemy)
+      if (clickedUnit && event.ctrlKey && selected &&
+          selected.unit_class === "LoiteringMunition" &&
+          clickedUnit.player !== selected.player) {
+
+        fetch("/attack_unit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            attacker_id: selected.id,
+            target_id: clickedUnit.id
+          })
+        })
+        .then(res => res.json())
+        .then(d => {
+          fetchUnits();
+        })
+        .catch(err => console.error(err));
+
+        return;
+      }
+
+      // 3. select unit
+      if (clickedUnit) {
+        selectedUnitId = clickedUnit.id;
+        moveTarget = null;
+        updateInfoPanel(clickedUnit);
+        return;
+      }
+
+      // 4. move
+      if (selectedUnitId !== null) {
+        fetch("/move_unit", {
+          method: "POST",
+          headers:  { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
+        })
+        .then(res => res.json())
+        .then(data => {
+          fetchUnits();
+        })
+        .catch(err => console.error(err));
+        moveTarget = { x: clickX, y: clickY };
+      }
+    });
 
     function updateInfoPanel(u) {
       const isBase = u.unit_class === "LogHub";
       const wasPlacingThisBase =
         placeRetransmitterMode && placingBaseId === u.id;
-    
+
       let html = "<ul>";
       for (const key in u) {
         if (u.hasOwnProperty(key) && key !== "_img") {
@@ -289,113 +363,120 @@ PAGE_TMPL = """
         }
       }
       html += "</ul>";
-    
-      if (isBase) {
-        html += `<button id="placeRtBtn">Place retransmitter</button>`;
-        if (wasPlacingThisBase) {
-          html += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
-        }
-      }
-    
-      infoPanel.innerHTML = html;
-    
-      if (isBase) {
-        const btn = document.getElementById("placeRtBtn");
-        btn.addEventListener("click", () => {
-          startRetransmitterPlacing(u.id, u);
-          // show message without re-rendering whole panel
-          const p = document.getElementById("placeMsg");
-          if (p) {
-            p.textContent = "Click on the map inside the base range to place retransmitter…";
-          } else {
-            infoPanel.innerHTML += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
+
+        if (isBase) {
+          const curr = u.current_spawned_uavs ?? 0;
+          const max = u.max_spawned_uavs ?? 5;
+        
+          html += `<p><strong>UAVs:</strong> ${curr} / ${max}</p>`;
+          html += `<button id="placeRtBtn">Place retransmitter</button>`;
+          html += `<button id="spawnUavBtn" ${curr >= max ? "disabled" : ""}>Spawn loitering munition</button>`;
+        
+          if (wasPlacingThisBase) {
+            html += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
           }
-        });
-      }
+        }
+
+      infoPanel.innerHTML = html;
+
+        if (isBase) {
+          const btn = document.getElementById("placeRtBtn");
+          if (btn) {
+            btn.addEventListener("click", () => {
+              startRetransmitterPlacing(u.id, u);
+              const p = document.getElementById("placeMsg");
+              if (p) {
+                p.textContent = "Click on the map inside the base range to place retransmitter…";
+              } else {
+                infoPanel.innerHTML += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
+              }
+            });
+          }
+        
+          const uavBtn = document.getElementById("spawnUavBtn");
+          if (uavBtn && !(u.current_spawned_uavs >= u.max_spawned_uavs)) {
+            uavBtn.addEventListener("click", () => {
+              startUavSpawn(u.id, u);
+              // optional: show small hint
+              infoPanel.innerHTML += `<p id="spawnUavMsg">Click on the map to set UAV target…</p>`;
+            });
+          }
+        }
     }
 
+    function drawUnits() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      for (const u of units) {
+        const size = u.size || 24;
+        const half = size / 2;
 
-        function drawUnits() {
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-          for (const u of units) {
-            const size = u.size || 24;
-            const half = size / 2;
-        
-            // 1) draw range for AntiAir
-            if (u.unit_class === "AntiAir" && u.range) {
-              ctx.beginPath();
-              ctx.arc(u.x, u.y, u.range, 0, Math.PI * 2);
-              ctx.strokeStyle = "rgba(0, 128, 255, 0.6)";
-              ctx.lineWidth = 2;
-              ctx.stroke();
-              ctx.fillStyle = "rgba(0, 128, 255, 0.08)";
-              ctx.fill();
-            }
-        
-            // 2) draw transmission range for LogHub (bases)
-            if (u.unit_class === "LogHub" && u.transmissionRange) {
-              ctx.beginPath();
-              ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
-              ctx.strokeStyle = "rgba(0, 200, 0, 0.6)";   // green-ish for comms
-              ctx.lineWidth = 2;
-              ctx.stroke();
-              ctx.fillStyle = "rgba(0, 200, 0, 0.05)";
-              ctx.fill();
-            }
-        
-            // 3) draw transmission range for GroundRetransmitter
-            if (u.unit_class === "GroundRetransmitter" && u.transmissionRange) {
-              ctx.beginPath();
-              ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
-              ctx.strokeStyle = "rgba(255, 165, 0, 0.6)";  // orange-ish
-              ctx.lineWidth = 2;
-              ctx.stroke();
-              ctx.fillStyle = "rgba(255, 165, 0, 0.05)";
-              ctx.fill();
-            }
-        
-            // draw unit/base icon
-            const img = u._img;
-            if (img && img.complete) {
-              ctx.drawImage(img, u.x - half, u.y - half, size, size);
-        
-              // tint only real units (optional — bases could stay untinted)
-              ctx.save();
-              ctx.globalAlpha = 0.35;
-              if (u.player === 1) ctx.fillStyle = "blue";
-              else if (u.player === 2) ctx.fillStyle = "red";
-              else ctx.fillStyle = "gray";
-              ctx.fillRect(u.x - half, u.y - half, size, size);
-              ctx.restore();
-            } else {
-              ctx.beginPath();
-              ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
-              if (u.player === 1) ctx.fillStyle = "blue";
-              else if (u.player === 2) ctx.fillStyle = "red";
-              else ctx.fillStyle = "gray";
-              ctx.fill();
-            }
-        
-            // selection ring (bases will also highlight if selectable)
-            if (u.id === selectedUnitId) {
-              ctx.beginPath();
-              ctx.arc(u.x, u.y, half + 4, 0, Math.PI * 2);
-              ctx.strokeStyle = "red";
-              ctx.lineWidth = 2;
-              ctx.stroke();
-            }
-          }
-        
-          if (moveTarget) {
+        // 1) draw range for enemy AntiAir (NEW condition)
+        if (
+          u.unit_class === "AntiAir" &&
+          u.range &&
+          showEnemyAA &&
+          u.player !== localPlayer
+        ) {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, u.range, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(0, 128, 255, 0.6)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "rgba(0, 128, 255, 0.08)";
+          ctx.fill();
+        }
+
+        // 2) draw transmission range for bases and ground retransmitters (toggable)
+        if (showTransmission && u.transmissionRange) {
+          if (u.unit_class === "LogHub" || u.unit_class === "GroundRetransmitter") {
             ctx.beginPath();
-            ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
-            ctx.strokeStyle = "blue";
+            ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
+            ctx.strokeStyle = "rgba(0, 200, 0, 0.6)";
             ctx.lineWidth = 2;
             ctx.stroke();
+            ctx.fillStyle = "rgba(0, 200, 0, 0.05)";
+            ctx.fill();
           }
         }
+
+        // draw unit/base icon
+        const img = u._img;
+        if (img && img.complete) {
+          ctx.drawImage(img, u.x - half, u.y - half, size, size);
+          ctx.save();
+          ctx.globalAlpha = 0.35;
+          if (u.player === 1) ctx.fillStyle = "blue";
+          else if (u.player === 2) ctx.fillStyle = "red";
+          else ctx.fillStyle = "gray";
+          ctx.fillRect(u.x - half, u.y - half, size, size);
+          ctx.restore();
+        } else {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
+          if (u.player === 1) ctx.fillStyle = "blue";
+          else if (u.player === 2) ctx.fillStyle = "red";
+          else ctx.fillStyle = "gray";
+          ctx.fill();
+        }
+
+        if (u.id === selectedUnitId) {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, half + 4, 0, Math.PI * 2);
+          ctx.strokeStyle = "red";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      if (moveTarget) {
+        ctx.beginPath();
+        ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
+        ctx.strokeStyle = "blue";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
 
     let lastTimestamp = null;
     function gameLoop(timestamp) {
@@ -403,7 +484,6 @@ PAGE_TMPL = """
       const dt = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
       drawUnits();
-
       window.requestAnimationFrame(gameLoop);
     }
 
@@ -414,9 +494,8 @@ PAGE_TMPL = """
   </script>
 </body>
 </html>
-
-
 """
+
 selected_unit_id = None  # server-side info about selection
 
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
@@ -511,7 +590,9 @@ def get_units():
             # simplest: index in list, but better to really give them an id once at creation
             data.update({
                 "transmissionRange": u.transmissionRange,
-                "available_retransmitters": getattr(u, "available_retransmitters",0)
+                "available_retransmitters": getattr(u, "available_retransmitters",0),
+                "current_spawned_uavs": getattr(u, "current_spawned_uavs", 0),
+                "max_spawned_uavs": getattr(u, "max_spawned_uavs", 5)
             })
 
         if isinstance(u, LogHub.GroundRetransmitter):
@@ -624,7 +705,54 @@ def place_retransmitter():
 
     return jsonify({"status": "ok", "available": base.available_retransmitters})
 
+@app.route("/spawn_uav", methods=["POST"])
+def spawn_uav():
+    data = request.get_json()
+    base_id = data.get("base_id")
+    target_x = data.get("x")
+    target_y = data.get("y")
 
+    # find the base
+    base = next((b for b in logBases if b.id == base_id), None)
+    if base is None:
+        return jsonify({"status": "error", "message": "base not found"}), 404
+
+    # quota check
+    max_uavs = getattr(base, "max_spawned_uavs", 5)
+    current_uavs = getattr(base, "current_spawned_uavs", 0)
+    if current_uavs >= max_uavs:
+        return jsonify({"status": "error", "message": "this base has no UAVs left"}), 400
+
+    # create Loitering Munition at base position
+    lm = UAVUnits.LoiteringMunition(
+        name=f"LM-{base.id}-{current_uavs+1}",
+        chanceToHit=50,
+        baseSpeed=55,
+        state=UAVUnits.UnitState.Idle,
+        position=(base.positionX, base.positionY),
+        image="static/images/uav.png",
+        armourType=UAVUnits.ArmourType.Unarmored,
+        player=base.player,
+        currentWeight=1.7,
+        idleBatteryDrainPerTick=0.0083,
+        moveBatteryDrainPerTick=0.0138,
+        payload=1.0,
+        explosiveType=UAVUnits.ExplosiveType.HEAT
+    )
+
+    # remember which base spawned it, so we can give the slot back when it dies
+    lm.parent_base_id = base.id
+
+    # set its destination to user click
+    lm.move_unit((target_x, target_y))
+
+    # add to live units list
+    units.append(lm)
+
+    # consume base slot
+    base.current_spawned_uavs = current_uavs + 1
+
+    return jsonify({"status": "ok", "uav_id": lm.id})
 
 def is_uav_in_comm(uav, bases, retransmitters):
     # uav.player must match base.player
