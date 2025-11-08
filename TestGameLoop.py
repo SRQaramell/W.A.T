@@ -4,7 +4,8 @@ import time
 from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
 from PIL import Image, ImageDraw
-import UAVUnits
+import UAVUnits, AntiAirUnits
+from UAVUnits import UnitState
 
 app = Flask(__name__)
 
@@ -194,7 +195,7 @@ PAGE_TMPL = """
 
     // initialization
     fetchUnits();
-    setInterval(fetchUnits, 250)
+    setInterval(fetchUnits, 100)
     window.requestAnimationFrame(gameLoop);
   </script>
 </body>
@@ -205,6 +206,8 @@ PAGE_TMPL = """
 selected_unit_id = None  # server-side info about selection
 
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
+
+aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
 
 @app.route("/")
 def index():
