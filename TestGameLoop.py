@@ -4,13 +4,15 @@ import time
 from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
 from PIL import Image, ImageDraw
-import UAVUnits
+import UAVUnits, AntiAirUnits
+from UAVUnits import UnitState
 
 app = Flask(__name__)
 
 MAP_WIDTH = 800
 MAP_HEIGHT = 500
 TICK_RATE = 10
+PLAYER1 = 1
 
 # --- HTML PAGE ---
 PAGE_TMPL = """
@@ -72,11 +74,25 @@ PAGE_TMPL = """
         .then(res => res.json())
         .then(data => {
           units = data;
+    
+          // recreate images
           units.forEach(u => {
             const img = new Image();
             img.src = u.image;
             u._img = img;
           });
+    
+          // 👇 NEW: if we have something selected, show its latest data
+          if (selectedUnitId !== null) {
+            const selected = units.find(u => u.id === selectedUnitId);
+            if (selected) {
+              updateInfoPanel(selected);
+            } else {
+              // selected unit disappeared
+              infoPanel.innerHTML = "No unit selected.";
+              selectedUnitId = null;
+            }
+          }
         })
         .catch(err => console.error("Failed to fetch units:", err));
     }
@@ -106,8 +122,20 @@ PAGE_TMPL = """
 
       // if click on empty space and a unit is selected → set target using that unit’s speed property
       if (selectedUnitId !== null) {
+        fetch("/move_unit", {
+            method: "POST",
+            headers:  { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
+        })
+        .then(res => res.json())
+        .then(data => {
+            fetchUnits();
+        })
+        .catch(err => console.error(err));
         moveTarget = { x: clickX, y: clickY };
       }
+      
+      
     });
 
     function updateInfoPanel(u) {
@@ -121,72 +149,76 @@ PAGE_TMPL = """
       infoPanel.innerHTML = html;
     }
 
-    function updateUnits(dt) {
-      for (const u of units) {
-        if (u.id === selectedUnitId && moveTarget) {
-          const dx = moveTarget.x - u.x;
-          const dy = moveTarget.y - u.y;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          const speed = u.speed || 100; // use unit’s speed property if present
-
-          if (dist > 1) {
-            const vx = (dx / dist) * speed * (dt / 1000);
-            const vy = (dy / dist) * speed * (dt / 1000);
-            u.x += vx;
-            u.y += vy;
-          } else {
-            moveTarget = null;
+        function drawUnits() {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+          for (const u of units) {
+            const size = u.size || 24;
+            const half = size / 2;
+        
+            // If this is AntiAir, draw its range first (so circle is under the icon)
+            if (u.unit_class === "AntiAir" && u.range) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, u.range, 0, Math.PI * 2);
+              ctx.strokeStyle = "rgba(0, 128, 255, 0.6)";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+        
+              // optional fill to visualize area
+              ctx.fillStyle = "rgba(0, 128, 255, 0.08)";
+              ctx.fill();
+            }
+        
+            const img = u._img;
+            if (img && img.complete) {
+              // Draw base image
+              ctx.drawImage(img, u.x - half, u.y - half, size, size);
+            
+              // Overlay color tint based on player
+              ctx.save();
+              ctx.globalAlpha = 0.35;
+              if (u.player === 1) ctx.fillStyle = "blue";
+              else if (u.player === 2) ctx.fillStyle = "red";
+              else ctx.fillStyle = "gray";
+              ctx.beginPath();
+              ctx.rect(u.x - half, u.y - half, size, size);
+              ctx.fill();
+              ctx.restore();
+            } else {
+              // Fallback: colored circle if no image
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
+              if (u.player === 1) ctx.fillStyle = "blue";
+              else if (u.player === 2) ctx.fillStyle = "red";
+              else ctx.fillStyle = "gray";
+              ctx.fill();
+            }
+        
+            // selection ring
+            if (u.id === selectedUnitId) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, half + 4, 0, Math.PI * 2);
+              ctx.strokeStyle = "red";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
           }
-
-          if (u.id === selectedUnitId) {
-            updateInfoPanel(u);
+        
+          if (moveTarget) {
+            ctx.beginPath();
+            ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
+            ctx.strokeStyle = "blue";
+            ctx.lineWidth = 2;
+            ctx.stroke();
           }
         }
-      }
-    }
 
-    function drawUnits() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      for (const u of units) {
-        const img = u._img;
-        const size = u.size || 24;
-        const half = size / 2;
-
-        if (img && img.complete) {
-          ctx.drawImage(img, u.x - half, u.y - half, size, size);
-        } else {
-          ctx.beginPath();
-          ctx.arc(u.x, u.y, half, 0, Math.PI*2);
-          ctx.fillStyle = "gray";
-          ctx.fill();
-        }
-
-        if (u.id === selectedUnitId) {
-          ctx.beginPath();
-          ctx.arc(u.x, u.y, half + 4, 0, Math.PI*2);
-          ctx.strokeStyle = "red";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-
-      if (moveTarget) {
-        ctx.beginPath();
-        ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI*2);
-        ctx.strokeStyle = "blue";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-    }
 
     let lastTimestamp = null;
     function gameLoop(timestamp) {
       if (!lastTimestamp) lastTimestamp = timestamp;
       const dt = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
-
-      updateUnits(dt);
       drawUnits();
 
       window.requestAnimationFrame(gameLoop);
@@ -194,6 +226,7 @@ PAGE_TMPL = """
 
     // initialization
     fetchUnits();
+    setInterval(fetchUnits, 100)
     window.requestAnimationFrame(gameLoop);
   </script>
 </body>
@@ -204,6 +237,8 @@ PAGE_TMPL = """
 selected_unit_id = None  # server-side info about selection
 
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
+
+aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
 
 @app.route("/")
 def index():
@@ -230,20 +265,58 @@ def map_image():
 
 
 # --- API: units ---
+
 @app.route("/units")
 def get_units():
     unit_data = []
-    for u in units:
-        unit_data.append({
+
+    # include both UAVs and AA
+    all_units = units + aaUnits
+
+    for u in all_units:
+        data = {
             "id": u.id,
             "name": u.name,
             "x": u.positionX,
             "y": u.positionY,
-            "image": u.image,   # path to image (e.g. "static/images/drone.png")
+            "image": u.image,
             "state": u.state.name,
-            "player": u.player
-        })
+            "player": u.player,
+            "unit_class": u.__class__.__name__,
+            "chanceToHit": getattr(u, "chanceToHit", None),
+            "baseSpeed": getattr(u, "baseSpeed", None),
+            "armourType": u.armourType.name if hasattr(u, "armourType") else None,
+            "size": 28  # small convenience so we can draw a square/circle
+        }
+
+        # extra fields for all UAVs
+        if isinstance(u, UAVUnits.UAV):
+            data.update({
+                "currentBattery": round(u.currentBattery, 2),
+                "currentWeight": u.currentWeight,
+                "idleBatteryDrainPerTick": u.idleBatteryDrainPerTick,
+                "moveBatteryDrainPerTick": u.moveBatteryDrainPerTick,
+            })
+
+        # extra fields for loitering munition
+        if isinstance(u, UAVUnits.LoiteringMunition):
+            data.update({
+                "payload": u.payload,
+                "explosiveType": u.explosiveType.name,
+            })
+
+        # extra fields for AntiAir
+        if isinstance(u, AntiAirUnits.AntiAir):
+            data.update({
+                "range": u.range,
+                "aa_state": u.AAstate.name,
+                "ammo": u.ammoCount
+            })
+
+        unit_data.append(data)
+
     return jsonify(unit_data)
+
 
 # --- API: select unit ---
 @app.route("/select_unit", methods=["POST"])
@@ -257,12 +330,43 @@ def select_unit():
     print(f"[SERVER] Unit selected: {unit_id}")
     return jsonify({"status": "ok", "selected": unit_id})
 
+@app.route("/move_unit", methods=["POST"])
+def move_unit():
+    data = request.get_json()
+    unit_id = data.get("id")
+    x = data.get("x")
+    y = data.get("y")
+
+    # find the unit by ID
+    for u in units:
+        if u.id == unit_id and u.player == PLAYER1:
+            u.move_unit((x, y))
+            print(f"[SERVER] Moving unit {unit_id} to ({x}, {y})")
+            return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y)})
+
+    return jsonify({"status": "error", "message": "unit not found"}), 404
+
 def game_loop():
     dt = 1.0/TICK_RATE
+    global units, aaUnits
     while True:
         for u in units:
             u.tick_unit(dt)
+
+        for aa in aaUnits:
+            aa.tickAA(dt, units)
         time.sleep(dt)
+
+        before_uav = len(units)
+        before_aa = len(aaUnits)
+
+        units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
+        aaUnits = [aa for aa in aaUnits if aa.state != UAVUnits.UnitState.Destroyed]
+
+        if len(units) != before_uav or len(aaUnits) != before_aa:
+            print(f"[SERVER] Destroyed units removed: "
+                  f"{before_uav - len(units)} UAVs, {before_aa - len(aaUnits)} AA units.")
+
 
 threading.Thread(target=game_loop, daemon=True).start()
 

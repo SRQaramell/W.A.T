@@ -35,8 +35,9 @@ class ArmourType(Enum):
 class Unit:
     nextID = 0
     positionX = 0
-    poistionY = 0
+    positionY = 0
     destination = None
+
 
     def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int):
         self.name = name
@@ -51,6 +52,10 @@ class Unit:
         self.armourType = armourType
         self.player = player
 
+    def move_unit(self, destination):
+        self.state = UnitState.Moving
+        self.destination = destination
+
     def tick_unit(self, dt: float):
         if self.state != UnitState.Moving:
             return
@@ -59,7 +64,7 @@ class Unit:
         targetY = self.destination[1]
 
         destinationX = targetX - self.positionX
-        destinationY = targetY - self.poistionY
+        destinationY = targetY - self.positionY
 
         dist = math.hypot(destinationX, destinationY)
 
@@ -75,8 +80,8 @@ class Unit:
             self.positionY = targetY
             self.state = UnitState.Idle
         else:
-            self.positionX = destinationX/dist * maxStep
-            self.positionY = destinationY/dist * maxStep
+            self.positionX += (destinationX/dist) * maxStep
+            self.positionY += (destinationY/dist) * maxStep
 
     def __str__(self):
         return f"{self.nazwa})"
