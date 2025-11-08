@@ -1390,7 +1390,7 @@ def is_uav_in_comm(uav, bases, retransmitters):
                 for f in uav_freqs:
                     if f in jammer_freqs:
                         # Option: only consider enemy jammers. Set to True to allow friendly jammers
-                        allow_same_player_jammer = False
+                        allow_same_player_jammer = True
                         if not allow_same_player_jammer and jammer.player == uav.player:
                             # ignore same-player jammer
                             continue
