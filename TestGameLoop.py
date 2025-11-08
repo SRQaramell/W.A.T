@@ -192,6 +192,8 @@ PAGE_TMPL = """
     let placingBaseId = null;
     let placingBaseData = null;
     
+    let simPaused = false;
+    
     let spawnUavMode = false;
     let spawnUavBaseId = null;
     let spawnUavBaseData = null;
@@ -597,6 +599,20 @@ PAGE_TMPL = """
           }
         }
       }
+      
+        if (e.code === "Space") {
+          e.preventDefault(); // so page doesn't scroll
+          fetch("/toggle_pause", { method: "POST" })
+            .then(r => r.json())
+            .then(d => {
+              if (d.status === "ok") {
+                simPaused = d.paused;
+                updatePauseBanner();
+              }
+            })
+            .catch(console.error);
+          return;
+        }
     });
     
     document.addEventListener("keyup", (e) => {
@@ -771,6 +787,22 @@ PAGE_TMPL = """
         const size = u.size || 24;
         const half = size / 2;
 
+        if (u.destination && Array.isArray(u.destination) && u.destination.length === 2) {
+          const [dx, dy] = u.destination;
+          const dist = Math.hypot(dx - u.x, dy - u.y);
+          if (dist > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(u.x, u.y);
+            ctx.lineTo(dx, dy);
+            ctx.strokeStyle = "rgba(0, 160, 255, 0.6)";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 4]);
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
         // 1) draw range for enemy AntiAir (NEW condition)
         if (
           u.unit_class === "AntiAir" &&
@@ -889,6 +921,8 @@ PAGE_TMPL = """
 
 selected_unit_id = None  # server-side info about selection
 
+SIM_PAUSED = False
+
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT,[2400])]
 
 aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/ICONS/AIR DEF ENEMY.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
@@ -959,6 +993,9 @@ def get_units():
                 "idleBatteryDrainPerTick": u.idleBatteryDrainPerTick,
                 "moveBatteryDrainPerTick": u.moveBatteryDrainPerTick,
             })
+            if getattr(u, "destination", None) is not None:
+                # convert tuple -> list for JSON
+                data["destination"] = [u.destination[0], u.destination[1]]
 
         if isinstance(u, UAVUnits.RetransmiterUAV):
             data.update({
@@ -1161,6 +1198,12 @@ def spawn_uav():
     base.current_spawned_uavs = current_uavs + 1
 
     return jsonify({"status": "ok", "uav_id": lm.id})
+
+@app.route("/toggle_pause", methods=["POST"])
+def toggle_pause():
+    global SIM_PAUSED
+    SIM_PAUSED = not SIM_PAUSED
+    return jsonify({"status": "ok", "paused": SIM_PAUSED})
 
 @app.route("/spawn_retrans_uav", methods=["POST"])
 def spawn_retrans_uav():
@@ -1433,9 +1476,15 @@ def is_uav_in_comm(uav, bases, retransmitters):
 
 
 def game_loop():
-    dt = 1.0/TICK_RATE
-    global units, aaUnits
+    dt = 1.0 / TICK_RATE
+    global units, aaUnits, SIM_PAUSED, pending_attacks
     while True:
+        if SIM_PAUSED:
+            # just wait one tick and go again
+            time.sleep(dt)
+            continue
+
+        # --- normal simulation below ---
         for u in units:
             if isinstance(u, UAVUnits.UAV):
                 if not is_uav_in_comm(u, logBases, ground_retransmitters):
@@ -1447,6 +1496,7 @@ def game_loop():
 
         for aa in aaUnits:
             aa.tickAA(dt, units)
+
         time.sleep(dt)
 
         before_uav = len(units)
