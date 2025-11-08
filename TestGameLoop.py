@@ -5,7 +5,7 @@ import math
 from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
 from PIL import Image, ImageDraw
-import UAVUnits, AntiAirUnits
+import UAVUnits, AntiAirUnits, LogHub
 from UAVUnits import UnitState
 
 app = Flask(__name__)
@@ -190,36 +190,42 @@ PAGE_TMPL = """
             const size = u.size || 24;
             const half = size / 2;
         
-            // If this is AntiAir, draw its range first (so circle is under the icon)
+            // 1) draw range for AntiAir
             if (u.unit_class === "AntiAir" && u.range) {
               ctx.beginPath();
               ctx.arc(u.x, u.y, u.range, 0, Math.PI * 2);
               ctx.strokeStyle = "rgba(0, 128, 255, 0.6)";
               ctx.lineWidth = 2;
               ctx.stroke();
-        
-              // optional fill to visualize area
               ctx.fillStyle = "rgba(0, 128, 255, 0.08)";
               ctx.fill();
             }
         
+            // 2) draw transmission range for LogHub (bases)
+            if (u.unit_class === "LogHub" && u.transmissionRange) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
+              ctx.strokeStyle = "rgba(0, 200, 0, 0.6)";   // green-ish for comms
+              ctx.lineWidth = 2;
+              ctx.stroke();
+              ctx.fillStyle = "rgba(0, 200, 0, 0.05)";
+              ctx.fill();
+            }
+        
+            // draw unit/base icon
             const img = u._img;
             if (img && img.complete) {
-              // Draw base image
               ctx.drawImage(img, u.x - half, u.y - half, size, size);
-            
-              // Overlay color tint based on player
+        
+              // tint only real units (optional — bases could stay untinted)
               ctx.save();
               ctx.globalAlpha = 0.35;
               if (u.player === 1) ctx.fillStyle = "blue";
               else if (u.player === 2) ctx.fillStyle = "red";
               else ctx.fillStyle = "gray";
-              ctx.beginPath();
-              ctx.rect(u.x - half, u.y - half, size, size);
-              ctx.fill();
+              ctx.fillRect(u.x - half, u.y - half, size, size);
               ctx.restore();
             } else {
-              // Fallback: colored circle if no image
               ctx.beginPath();
               ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
               if (u.player === 1) ctx.fillStyle = "blue";
@@ -228,7 +234,7 @@ PAGE_TMPL = """
               ctx.fill();
             }
         
-            // selection ring
+            // selection ring (bases will also highlight if selectable)
             if (u.id === selectedUnitId) {
               ctx.beginPath();
               ctx.arc(u.x, u.y, half + 4, 0, Math.PI * 2);
@@ -246,6 +252,7 @@ PAGE_TMPL = """
             ctx.stroke();
           }
         }
+
 
 
     let lastTimestamp = null;
@@ -273,6 +280,8 @@ selected_unit_id = None  # server-side info about selection
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
 
 aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
+
+logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), 300, "static/images/base.png",1)]
 
 pending_attacks = {}
 
@@ -306,35 +315,36 @@ def map_image():
 def get_units():
     unit_data = []
 
-    # include both UAVs and AA
-    all_units = units + aaUnits
+    # include UAVs, AA and bases
+    all_units = units + aaUnits + logBases
 
     for u in all_units:
+        # base dictionary common for everything
         data = {
-            "id": u.id,
-            "name": u.name,
+            "id": getattr(u, "id", None),   # bases don't have id yet, we'll fix below
+            "name": getattr(u, "name", "Unknown"),
             "x": u.positionX,
             "y": u.positionY,
-            "image": u.image,
-            "state": u.state.name,
-            "player": u.player,
+            "image": getattr(u, "image", None),
+            "player": getattr(u, "player", 0),
             "unit_class": u.__class__.__name__,
-            "chanceToHit": getattr(u, "chanceToHit", None),
-            "baseSpeed": getattr(u, "baseSpeed", None),
-            "armourType": u.armourType.name if hasattr(u, "armourType") else None,
-            "size": 28  # small convenience so we can draw a square/circle
+            "size": 28
         }
 
-        # extra fields for all UAVs
+        # extra fields for UAVs
         if isinstance(u, UAVUnits.UAV):
             data.update({
+                "state": u.state.name,
+                "chanceToHit": getattr(u, "chanceToHit", None),
+                "baseSpeed": getattr(u, "baseSpeed", None),
+                "armourType": u.armourType.name if hasattr(u, "armourType") else None,
                 "currentBattery": round(u.currentBattery, 2),
                 "currentWeight": u.currentWeight,
                 "idleBatteryDrainPerTick": u.idleBatteryDrainPerTick,
                 "moveBatteryDrainPerTick": u.moveBatteryDrainPerTick,
             })
 
-        # extra fields for loitering munition
+        # extra fields for LoiteringMunition
         if isinstance(u, UAVUnits.LoiteringMunition):
             data.update({
                 "payload": u.payload,
@@ -344,15 +354,24 @@ def get_units():
         # extra fields for AntiAir
         if isinstance(u, AntiAirUnits.AntiAir):
             data.update({
+                "state": u.state.name,
+                "armourType": u.armourType.name if hasattr(u, "armourType") else None,
                 "range": u.range,
                 "aa_state": u.AAstate.name,
                 "ammo": u.ammoCount
             })
 
+        # extra fields for LogHub (the bases)
+        if isinstance(u, LogHub.LogHub):
+            # give bases a pseudo-id if they don't have one
+            # simplest: index in list, but better to really give them an id once at creation
+            data.update({
+                "transmissionRange": u.transmissionRange
+            })
+
         unit_data.append(data)
 
     return jsonify(unit_data)
-
 
 # --- API: select unit ---
 @app.route("/select_unit", methods=["POST"])
@@ -376,6 +395,11 @@ def move_unit():
     # find the unit by ID
     for u in units:
         if u.id == unit_id and u.player == PLAYER1:
+
+            if isinstance(u, UAVUnits.UAV):
+                if not is_uav_in_comm(u, logBases):
+                    return jsonify({"status": "error", "message": "UAV out of transmission range"}), 400
+
             u.move_unit((x, y))
             print(f"[SERVER] Moving unit {unit_id} to ({x}, {y})")
             return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y)})
@@ -410,13 +434,28 @@ def attack_unit():
 
     return jsonify({"status": "ok", "message": "attack order stored"})
 
-
+def is_uav_in_comm(uav, bases):
+    # uav.player must match base.player
+    for b in bases:
+        if b.player == uav.player:
+            dx = uav.positionX - b.positionX
+            dy = uav.positionY - b.positionY
+            dist = math.hypot(dx, dy)
+            if dist <= b.transmissionRange:
+                return True
+    return False
 
 def game_loop():
     dt = 1.0/TICK_RATE
     global units, aaUnits
     while True:
         for u in units:
+            if isinstance(u, UAVUnits.UAV):
+                if not is_uav_in_comm(u, logBases):
+                    u.destination = None
+                    u.state = UAVUnits.UnitState.Idle
+                    u.tick_unit(dt)
+                    continue
             u.tick_unit(dt)
 
         for aa in aaUnits:
