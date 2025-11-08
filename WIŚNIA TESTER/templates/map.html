@@ -3,9 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Mapa – Baza z limitem anten</title>
+  <title>Mapa anten – z bazą (ALLY/ENEMY)</title>
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
@@ -13,353 +12,297 @@
     html, body, #map { height: 100%; margin: 0; }
 
     .toolbar, .basebar {
-      display: flex; gap: 8px; align-items: center;
-      background: white; padding: 6px; border-radius: 10px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+      position: absolute;
+      display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+      background: #fff; padding: 6px 10px; border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      z-index: 999;
     }
-    .btn {
-      width: 44px; height: 44px; line-height: 44px;
-      border: none; border-radius: 10px;
-      background: white; box-shadow: 0 2px 8px rgba(0,0,0,.2);
-      font-size: 24px; font-weight: 700; cursor: pointer;
-    }
-    .btn.active { background: #e6f7ff; outline: 2px solid #91d5ff }
+    .toolbar { bottom: 12px; right: 12px; }
+    .basebar { bottom: 12px; left: 12px; }
+
+    .toolbar select, .toolbar input, .toolbar button,
+    .basebar select, .basebar button { font: 600 13px system-ui; border-radius: 6px; padding: 4px 6px; }
+    .btn { border: none; cursor: pointer; }
+    .btn.active { background: #cde9ff; }
     .cursor-crosshair { cursor: crosshair !important }
 
-    /* Ikony anten */
-    .ant-icon {
+    /* marker z napisem 2G/3G/4G/5G (kolor wg afiliacji anteny) */
+    .badge {
       transform: translate(-50%, -100%);
       display: inline-flex; align-items: center; justify-content: center;
       width: 34px; height: 34px; border-radius: 50%;
       border: 2px solid rgba(0,0,0,.25);
       box-shadow: 0 1px 4px rgba(0,0,0,.2);
-      font: 700 12px/1 system-ui, sans-serif; color: #fff;
+      font: 800 12px/1 system-ui, sans-serif; color: #fff;
       text-shadow: 0 1px 1px rgba(0,0,0,.35);
       user-select: none;
     }
-    .g2 { background: #6b7280; }
-    .g3 { background: #2563eb; }
-    .g4 { background: #16a34a; }
-    .g5 { background: #dc2626; }
-
-    /* Baza */
-    .base-icon {
-      transform: translate(-50%, -100%);
-      background: #111827; color: #fff;
-      width: 38px; height: 38px; border-radius: 8px;
-      display: inline-flex; align-items: center; justify-content: center;
-      border: 2px solid rgba(0,0,0,.25);
-      box-shadow: 0 1px 4px rgba(0,0,0,.2);
-      font: 800 12px/1 system-ui, sans-serif;
-    }
+    .aff-ally    { background: #16a34a; }  /* zielony */
+    .aff-enemy   { background: #dc2626; }  /* czerwony */
+    .aff-neutral { background: #2563eb; }  /* niebieski */
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <script>
-    // --- Mapa ---
-    const map = L.map('map', {
-      center: [51.1079, 17.0385],
-      zoom: 7,
-      zoomControl: true,
-      scrollWheelZoom: true,
-      doubleClickZoom: true,
-      boxZoom: true,
-      keyboard: true,
-      touchZoom: true,
-      dragging: true
-    });
+  <!-- TOOLBAR anten: ogólna/kierunkowa, wiązka, afiliacja, rola, kategoria, + -->
+  <div class="toolbar">
+    <select id="selKind">
+      <option value="ogolna" selected>Ogólna (360°)</option>
+      <option value="kierunkowa">Kierunkowa (sektor)</option>
+    </select>
 
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, minZoom: 2,
-      attribution: '&copy; OpenStreetMap'
+    <label style="display:flex;align-items:center;gap:4px;">
+      Wiązka°
+      <input id="beam" type="number" min="10" max="180" step="5" value="60" style="width:68px;">
+    </label>
+
+    <select id="selAff">
+      <option value="ally" selected>Sojusznicza</option>
+      <option value="enemy">Wroga</option>
+      <option value="neutral">Neutralna</option>
+    </select>
+    <select id="selRole">
+      <option value="transmission" selected>Transmisyjna (cień zielony)</option>
+      <option value="jamming">Zakłócająca (cień czerwony)</option>
+    </select>
+    <select id="selCat">
+      <option value="2">2G</option>
+      <option value="3">3G</option>
+      <option value="4">4G</option>
+      <option value="5" selected>5G</option>
+    </select>
+
+    <button class="btn" id="btnAdd">+</button>
+  </div>
+
+  <!-- BAZA: wybór typu i przycisk postawienia -->
+  <div class="basebar">
+    <select id="baseType">
+      <option value="ally" selected>Baza Sojusznicza</option>
+      <option value="enemy">Baza Wroga</option>
+    </select>
+    <button class="btn" id="btnPlaceBase" title="Postaw bazę">Baza</button>
+  </div>
+
+  <script>
+    // === MAPA ===
+    const map = L.map('map', { center: [51.1079, 17.0385], zoom: 13 });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, minZoom: 2, attribution: '&copy; OpenStreetMap'
     }).addTo(map);
 
     const antennasLayer = L.layerGroup().addTo(map);
-    const baseLayer = L.layerGroup().addTo(map);
+    const basesLayer = L.layerGroup().addTo(map);
 
-    // --- Ikony ---
-    function iconForCategory(category) {
-      const g = Number(category);
-      const cls = g === 2 ? 'g2' : g === 3 ? 'g3' : g === 4 ? 'g4' : 'g5';
-      const label = `${g}G`;
+    // === IKONY ANTEN (środek z napisem 2G/3G/4G/5G) ===
+    function markerIcon(category, affiliation) {
+      const classes = ['badge'];
+      if (affiliation === 'ally') classes.push('aff-ally');
+      else if (affiliation === 'enemy') classes.push('aff-enemy');
+      else classes.push('aff-neutral');
+
       return L.divIcon({
-        className: `ant-icon ${cls}`,
-        html: `<span>${label}</span>`,
-        iconSize: [34, 34],
-        iconAnchor: [17, 34],
-        popupAnchor: [0, -34]
-      });
-    }
-    const baseIcon = L.divIcon({
-      className: 'base-icon', html: 'BASE',
-      iconSize: [38, 38], iconAnchor: [19, 38], popupAnchor: [0, -38]
-    });
-
-    // --- Klasa Antenna ---
-    class Antenna {
-      constructor({ id, name, lat, lng, radius, battery, category, height }) {
-        this.id = id;
-        this.name = name;
-        this.latlng = L.latLng(lat, lng);
-        this.radius = radius;
-        this.battery = battery;
-        this.category = category;
-        this.height = height;
-
-        this.marker = L.marker(this.latlng, { icon: iconForCategory(this.category) })
-          .bindPopup(this._popupHtml());
-        this.circle = L.circle(this.latlng, { radius: this.radius, fillOpacity: 0.15 });
-        this.group = L.layerGroup([this.marker, this.circle]).addTo(antennasLayer);
-        this._attachHandlers();
-      }
-      _popupHtml() {
-        const { lat, lng } = this.latlng;
-        return `
-          <b>${this.name}</b><br/>
-          Typ: <b>${this.category}G</b><br/>
-          Bateria: ${this.battery}%<br/>
-          Wysokość: ${this.height != null ? this.height.toFixed(1) + ' m n.p.m.' : '—'}<br/>
-          Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}<br/>
-          Promień: ${this.radius} m<br/>
-          <button data-action="delete" style="margin-top:6px">Usuń</button>
-        `;
-      }
-      _attachHandlers() {
-        this.marker.on('popupopen', (e) => {
-          const btn = e.popup.getElement().querySelector('button[data-action="delete"]');
-          if (btn) btn.onclick = async () => {
-            const ok = await deleteAntenna(this.id);
-            if (ok) antennasLayer.removeLayer(this.group);
-          };
-        });
-      }
-    }
-
-    // --- API ---
-    async function apiGetAntennas() {
-      const r = await fetch('/api/antennas'); return r.json();
-    }
-    async function apiCreateAntenna(payload) {
-      const r = await fetch('/api/antennas', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!r.ok) throw new Error('POST /api/antennas failed');
-      return r.json();
-    }
-    async function deleteAntenna(id) {
-      const r = await fetch('/api/antennas/' + id, { method: 'DELETE' });
-      return r.status === 204;
-    }
-    async function loadAntennas() {
-      const data = await apiGetAntennas();
-      antennasLayer.clearLayers();
-      data.forEach(a => new Antenna(a));
-    }
-
-    // --- Toolbar: dodawanie pojedynczych anten („+”) ---
-    let selectedCategory = 5;
-    const ToolbarControl = L.Control.extend({
-      options: { position: 'bottomright' },
-      onAdd: function() {
-        const wrap = L.DomUtil.create('div', 'toolbar');
-        const select = L.DomUtil.create('select', '', wrap);
-        ['2','3','4','5'].forEach(g => {
-          const opt = document.createElement('option');
-          opt.value = g; opt.textContent = g + 'G';
-          if (g === String(selectedCategory)) opt.selected = true;
-          select.appendChild(opt);
-        });
-        select.onchange = () => { selectedCategory = Number(select.value); };
-
-        const btn = L.DomUtil.create('button', 'btn add-antenna-btn', wrap);
-        btn.textContent = '+';
-        btn.title = 'Tryb dodawania (pojedyncze)';
-        L.DomEvent.disableClickPropagation(wrap);
-        L.DomEvent.disableScrollPropagation(wrap);
-        L.DomEvent.on(btn, 'click', () => toggleAddMode(btn));
-        return wrap;
-      }
-    });
-    map.addControl(new ToolbarControl());
-
-    let addMode = false;
-    function toggleAddMode(btn) {
-      addMode = !addMode;
-      // tryb bazy nie może być aktywny jednocześnie
-      stopBasePlacementMode();
-      stopBaseSeriesMode();
-      btn.classList.toggle('active', addMode);
-      document.getElementById('map').classList.toggle('cursor-crosshair', addMode);
-      if (addMode) map.on('click', handleAddClick);
-      else map.off('click', handleAddClick);
-    }
-    async function handleAddClick(e) {
-      await placeOneAntenna(e.latlng.lat, e.latlng.lng, selectedCategory);
-    }
-    async function placeOneAntenna(lat, lng, category) {
-      const payload = { lat, lng, radius: 300, category, battery: 100 };
-      try { const saved = await apiCreateAntenna(payload); new Antenna(saved); }
-      catch (err) { console.error(err); alert('Nie udało się dodać anteny.'); }
-    }
-
-    // --- BAZA: stawianie + popup z konfiguracją i limitem 5 ---
-    let baseControlInstance = null;
-    let baseMarker = null;
-    const baseState = {
-      remaining: 5,        // magazyn maks 5
-      seriesActive: false, // czy kliknięcia mapy dodają anteny z bazy
-      category: 5          // wybrana kategoria w popupie
-    };
-
-    const BaseControl = L.Control.extend({
-      options: { position: 'bottomleft' },
-      onAdd: function() {
-        const wrap = L.DomUtil.create('div', 'basebar');
-        const btn = L.DomUtil.create('button', 'btn add-base-btn', wrap);
-        btn.textContent = 'B';
-        btn.title = 'Postaw bazę';
-        L.DomEvent.disableClickPropagation(wrap);
-        L.DomEvent.disableScrollPropagation(wrap);
-        L.DomEvent.on(btn, 'click', () => toggleBasePlacementMode(btn));
-        return wrap;
-      }
-    });
-    function addBaseControl() { if (!baseControlInstance) { baseControlInstance = new BaseControl(); map.addControl(baseControlInstance); } }
-    function removeBaseControl() { if (baseControlInstance) { map.removeControl(baseControlInstance); baseControlInstance = null; } }
-
-    let basePlaceMode = false;
-    function toggleBasePlacementMode(btn) {
-      basePlaceMode = !basePlaceMode;
-      // wyłącz inne tryby
-      if (addMode) toggleAddMode(document.querySelector('.add-antenna-btn'));
-      stopBaseSeriesMode();
-      btn.classList.toggle('active', basePlaceMode);
-      document.getElementById('map').classList.toggle('cursor-crosshair', basePlaceMode);
-      if (basePlaceMode) map.on('click', handlePlaceBase);
-      else map.off('click', handlePlaceBase);
-    }
-    function stopBasePlacementMode() {
-      if (!basePlaceMode) return;
-      const btn = document.querySelector('.add-base-btn');
-      if (btn) btn.classList.remove('active');
-      basePlaceMode = false;
-      document.getElementById('map').classList.remove('cursor-crosshair');
-      map.off('click', handlePlaceBase);
-    }
-    function handlePlaceBase(e) {
-      baseMarker = L.marker(e.latlng, { icon: baseIcon }).addTo(baseLayer);
-      // blokujemy dalsze stawianie bazy i ukrywamy przycisk
-      stopBasePlacementMode();
-      removeBaseControl();
-      // reset stanu magazynu
-      baseState.remaining = 5;
-      baseState.seriesActive = false;
-      baseState.category = 5;
-
-      // popup bazy: konfiguracja i status
-      baseMarker.bindPopup(renderBasePopup(), { closeOnClick: false }).openPopup();
-      attachBasePopupHandlers();
-      // kliknięcie bazy zawsze otwiera popup
-      baseMarker.on('click', () => {
-        baseMarker.openPopup();
-        baseMarker.setPopupContent(renderBasePopup());
-
-        attachBasePopupHandlers();
+        className: classes.join(' '),
+        html: `<span>${Number(category)}G</span>`,
+        iconSize: [34,34], iconAnchor:[17,34], popupAnchor:[0,-34]
       });
     }
 
-    function renderBasePopup() {
-      const disabled = baseState.remaining <= 0 ? 'disabled' : '';
-      const hint = baseState.seriesActive
-        ? `<div style="margin-top:6px;color:#0a7">Tryb aktywny: klikaj na mapę, aby dodać anteny.</div>`
-        : `<div style="margin-top:6px;color:#555">Po aktywacji każde kliknięcie mapy doda 1 antenę aż do wyczerpania magazynu.</div>`;
+    // === STYLE POKRYCIA ANTEN: role → fill (bez obwódek) ===
+    function coverageStyle(role) {
+      const fill = role === 'jamming' ? '#dc2626' : '#16a34a'; // czerwień dla zakłócania, zieleń dla transmisji
+      return { fillColor: fill, fillOpacity: 0.15, stroke: false };
+    }
+
+    // === GEOMETRIA (kierunkowe) ===
+    function computeBearingDeg(a,b){
+      const φ1=a.lat*Math.PI/180, φ2=b.lat*Math.PI/180, Δλ=(b.lng-a.lng)*Math.PI/180;
+      const y=Math.sin(Δλ)*Math.cos(φ2);
+      const x=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(Δλ);
+      let θ=Math.atan2(y,x)*180/Math.PI; return (θ+360)%360;
+    }
+    function destPoint(origin, distanceMeters, bearingDeg){
+      const R=6371000, φ1=origin.lat*Math.PI/180, λ1=origin.lng*Math.PI/180, θ=bearingDeg*Math.PI/180, δ=distanceMeters/R;
+      const sinφ1=Math.sin(φ1), cosφ1=Math.cos(φ1), sinδ=Math.sin(δ), cosδ=Math.cos(δ);
+      const sinφ2=sinφ1*cosδ+cosφ1*sinδ*Math.cos(θ); const φ2=Math.asin(sinφ2);
+      const y=Math.sin(θ)*sinδ*cosφ1, x=cosδ-sinφ1*sinφ2; const λ2=λ1+Math.atan2(y,x);
+      return L.latLng(φ2*180/Math.PI, ((λ2*180/Math.PI+540)%360)-180);
+    }
+    function sectorPolygon(centerLatLng, radiusMeters, bearingDeg, widthDeg, steps=64, style={}){
+      const pts=[centerLatLng], start=(bearingDeg-widthDeg/2), end=(bearingDeg+widthDeg/2), d=(end-start)/steps;
+      for(let i=0;i<=steps;i++){ const ang=start+d*i; pts.push(destPoint(centerLatLng, radiusMeters, ang)); }
+      pts.push(centerLatLng); return L.polygon(pts, style);
+    }
+
+    // === API (Twoje endpointy z app.py) ===
+    async function apiGetAntennas(){ const r=await fetch('/api/antennas'); return r.json(); }
+    async function apiCreateAntenna(payload){
+      const r=await fetch('/api/antennas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if(!r.ok) throw new Error('POST /api/antennas failed'); return r.json();
+    }
+    async function deleteAntenna(id){ const r=await fetch('/api/antennas/'+id,{method:'DELETE'}); return r.status===204; }
+
+    // === RYSOWANIE ANTEN ===
+    function popupHtml(a) {
       return `
-        <b>Baza</b><br/>
-        Pozostało: <b>${baseState.remaining}</b> / 5 anten<br/>
-        <label style="display:block;margin-top:6px;">
-          Kategoria:
-          <select id="baseCategory" ${disabled}>
-            <option value="2" ${baseState.category===2?'selected':''}>2G</option>
-            <option value="3" ${baseState.category===3?'selected':''}>3G</option>
-            <option value="4" ${baseState.category===4?'selected':''}>4G</option>
-            <option value="5" ${baseState.category===5?'selected':''}>5G</option>
-          </select>
-        </label>
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button id="baseStart" ${disabled}>${baseState.seriesActive?'Zatrzymaj':'Aktywuj'}</button>
-          <button id="baseReset">Reset (5)</button>
-        </div>
-        ${hint}
+        <b>${a.category}G</b> — ${a.antenna_type}<br/>
+        Rola: ${a.role}, Afiliacja: ${a.affiliation}<br/>
+        Lat: ${a.lat.toFixed(5)}, Lng: ${a.lng.toFixed(5)}<br/>
+        Wysokość: ${a.height != null ? a.height.toFixed(1) + ' m n.p.m.' : '—'}<br/>
+        Promień: ${a.radius} m
+        <div style="margin-top:6px;"><button data-del="${a.id}">Usuń</button></div>
       `;
     }
+    function renderAntenna(a){
+      const marker = L.marker([a.lat, a.lng], { icon: markerIcon(a.category, a.affiliation) }).addTo(antennasLayer);
+      const style = coverageStyle(a.role);
 
-    function attachBasePopupHandlers() {
-      const popupEl = baseMarker.getPopup()?.getElement();
-      if (!popupEl) return;
+      let shape;
+      if (a.antenna_type === 'kierunkowa' && typeof a.bearing_deg === 'number') {
+        shape = sectorPolygon([a.lat, a.lng], a.radius, a.bearing_deg, a.beam_width_deg || 60, 64, style)
+          .addTo(antennasLayer);
+      } else {
+        shape = L.circle([a.lat, a.lng], { radius: a.radius, ...style }).addTo(antennasLayer);
+      }
 
-      const sel = popupEl.querySelector('#baseCategory');
-      if (sel) sel.onchange = () => { baseState.category = Number(sel.value); };
+      marker.bindPopup(popupHtml(a));
+      marker.on('popupopen', (e)=>{
+        const btn = e.popup.getElement().querySelector('button[data-del]');
+        if(btn) btn.onclick = async ()=>{
+          const ok = await deleteAntenna(a.id);
+          if(ok){ antennasLayer.removeLayer(marker); antennasLayer.removeLayer(shape); }
+        };
+      });
+    }
 
-      const startBtn = popupEl.querySelector('#baseStart');
-      if (startBtn) startBtn.onclick = () => {
-        if (baseState.seriesActive) {
-          stopBaseSeriesMode();
+    // === Wczytaj istniejące anteny ===
+    (async function(){
+      const data = await apiGetAntennas();
+      data.forEach(renderAntenna);
+    })();
+
+    // === TRYB DODAWANIA ANTEN ===
+    let kind = 'ogolna', beam = 60, aff = 'ally', role = 'transmission', cat = 5;
+    let addMode = false, anchor = null, anchorMarker = null;
+
+    document.getElementById('selKind').onchange = e => kind = e.target.value;
+    document.getElementById('beam').onchange = e => beam = Math.max(10, Math.min(180, Number(e.target.value||60)));
+    document.getElementById('selAff').onchange = e => aff = e.target.value;
+    document.getElementById('selRole').onchange = e => role = e.target.value;
+    document.getElementById('selCat').onchange = e => cat = Number(e.target.value);
+
+    const btnAdd = document.getElementById('btnAdd');
+    btnAdd.onclick = () => {
+      addMode = !addMode;
+      clearAnchor();
+      btnAdd.classList.toggle('active', addMode);
+      map.getContainer().classList.toggle('cursor-crosshair', addMode);
+    };
+
+    function clearAnchor(){
+      anchor=null; if(anchorMarker){ antennasLayer.removeLayer(anchorMarker); anchorMarker=null; }
+    }
+
+    map.on('click', async (e)=>{
+      if(!addMode) return;
+
+      if (kind === 'ogolna') {
+        await placeOne(e.latlng.lat, e.latlng.lng, null);
+      } else {
+        if (!anchor) {
+          anchor = e.latlng;
+          anchorMarker = L.circleMarker(anchor,{radius:6,weight:2,color:'#111',fillColor:'#0af',fillOpacity:.85})
+            .bindTooltip('Punkt anteny ustawiony — kliknij kierunek',{permanent:true,direction:'top'})
+            .addTo(antennasLayer);
         } else {
-          startBaseSeriesMode();
+          const bearing = computeBearingDeg(anchor, e.latlng);
+          await placeOne(anchor.lat, anchor.lng, bearing);
+          clearAnchor();
         }
-        // odśwież popup
-        baseMarker.setPopupContent(renderBasePopup());
-        attachBasePopupHandlers();
-      };
-
-      const resetBtn = popupEl.querySelector('#baseReset');
-      if (resetBtn) resetBtn.onclick = () => {
-        baseState.remaining = 5;
-        stopBaseSeriesMode();
-        baseMarker.setPopupContent(renderBasePopup());
-        attachBasePopupHandlers();
-      };
-    }
-
-    function startBaseSeriesMode() {
-      if (baseState.remaining <= 0) return;
-      // wyłącz inne tryby
-      if (addMode) toggleAddMode(document.querySelector('.add-antenna-btn'));
-      baseState.seriesActive = true;
-      document.getElementById('map').classList.add('cursor-crosshair');
-      map.on('click', handleBaseSeriesClick);
-    }
-    function stopBaseSeriesMode() {
-      if (!baseState.seriesActive) return;
-      baseState.seriesActive = false;
-      document.getElementById('map').classList.remove('cursor-crosshair');
-      map.off('click', handleBaseSeriesClick);
-    }
-    async function handleBaseSeriesClick(e) {
-      if (!baseState.seriesActive || baseState.remaining <= 0) {
-        stopBaseSeriesMode();
-        baseMarker.setPopupContent(renderBasePopup());
-        attachBasePopupHandlers();
-        return;
       }
-      // postaw 1 antenę z magazynu bazy
-      await placeOneAntenna(e.latlng.lat, e.latlng.lng, baseState.category);
-      baseState.remaining -= 1;
+    });
 
-      if (baseState.remaining <= 0) {
-        stopBaseSeriesMode();
+    async function placeOne(lat, lng, bearing){
+      const payload = {
+        lat, lng,
+        radius: 300,
+        category: cat,
+        affiliation: aff,
+        role: role,
+        antenna_type: kind
+      };
+      if (kind === 'kierunkowa') {
+        payload.bearing_deg = bearing;
+        payload.beam_width_deg = beam;
       }
-      // odśwież popup, aby pokazać pozostałą liczbę
-      baseMarker.setPopupContent(renderBasePopup());
-      attachBasePopupHandlers();
+      const saved = await apiCreateAntenna(payload);
+      renderAntenna(saved);
     }
 
-    // Start
-    loadAntennas();
-    addBaseControl();
+    // =================== BAZY (ALLY / ENEMY) ===================
+
+    // Ścieżki do ikon (umieść pliki w /static/ICONS/)
+    const HQ_ALLY_URL  = "static/ICONS/HQ_ALLY.png";
+    const HQ_ENEMY_URL = "static/ICONS/HQ_ENEMY.png";
+
+    const hqIconAlly = L.icon({
+      iconUrl: HQ_ALLY_URL,
+      iconSize: [44,44],
+      iconAnchor: [22,44],
+      popupAnchor: [0,-44]
+    });
+    const hqIconEnemy = L.icon({
+      iconUrl: HQ_ENEMY_URL,
+      iconSize: [44,44],
+      iconAnchor: [22,44],
+      popupAnchor: [0,-44]
+    });
+
+    function baseFillColor(type) {
+      // tylko cień: zielony dla sojuszniczej, czerwony dla wrogiej
+      return type === 'ally' ? '#16a34a' : '#dc2626';
+    }
+
+    let baseTypeSel = document.getElementById('baseType');
+    let btnPlaceBase = document.getElementById('btnPlaceBase');
+    let basePlaceMode = false;
+
+    btnPlaceBase.onclick = () => {
+      basePlaceMode = !basePlaceMode;
+      btnPlaceBase.classList.toggle('active', basePlaceMode);
+      map.getContainer().classList.toggle('cursor-crosshair', basePlaceMode);
+      if (basePlaceMode) {
+        // wyłącz dodawanie anten, jeśli było aktywne
+        if (addMode) btnAdd.click();
+        map.on('click', placeBaseOnce);
+      } else {
+        map.off('click', placeBaseOnce);
+      }
+    };
+
+    function placeBaseOnce(e) {
+      const t = baseTypeSel.value; // ally | enemy
+      const icon = (t === 'ally') ? hqIconAlly : hqIconEnemy;
+      const fill = baseFillColor(t);
+
+      const m = L.marker(e.latlng, { icon }).addTo(basesLayer)
+        .bindPopup(`<b>HQ ${t.toUpperCase()}</b><br>Lat: ${e.latlng.lat.toFixed(5)}, Lng: ${e.latlng.lng.toFixed(5)}<br>Promień: 300 m`)
+        .openPopup();
+
+      const circle = L.circle(e.latlng, { radius: 300, fillColor: fill, fillOpacity: 0.15, stroke: false })
+        .addTo(basesLayer);
+
+      // wyłącz tryb stawiania bazy po jednym kliknięciu
+      basePlaceMode = false;
+      btnPlaceBase.classList.remove('active');
+      map.getContainer().classList.remove('cursor-crosshair');
+      map.off('click', placeBaseOnce);
+
+      // proste usuwanie po kliknięciu PPM (opcjonalnie)
+      m.on('contextmenu', () => { basesLayer.removeLayer(m); basesLayer.removeLayer(circle); });
+    }
   </script>
 </body>
 </html>
