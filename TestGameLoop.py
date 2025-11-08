@@ -9,8 +9,8 @@ import UAVUnits, AntiAirUnits, LogHub
 
 app = Flask(__name__)
 
-MAP_WIDTH = 800
-MAP_HEIGHT = 500
+MAP_WIDTH = 1024
+MAP_HEIGHT = 1024
 TICK_RATE = 10
 PLAYER1 = 1
 ATTACK_RANGE = 3
@@ -72,16 +72,45 @@ PAGE_TMPL = """
   </style>
 </head>
 <body>
-  <div id="overlayMenu">
-    <label>
-      <input type="checkbox" id="chkTransmission" checked>
-      Show transmission zones
-    </label>
-    <label>
-      <input type="checkbox" id="chkEnemyAA" checked>
-      Show enemy AA ranges
-    </label>
-  </div>
+    <div id="overlayMenu">
+      <label>
+        <input type="checkbox" id="chkTransmission" checked>
+        Show transmission zones
+      </label>
+      <label>
+        <input type="checkbox" id="chkEnemyAA" checked>
+        Show enemy AA ranges
+      </label>
+      <hr>
+      <div><strong>Admin spawn</strong></div>
+      <div>
+        <label>Type:
+          <select id="adminUnitType">
+            <option value="LoiteringMunition">LoiteringMunition</option>
+            <option value="AntiAir">AntiAir</option>
+            <option value="LogHub">LogHub</option>
+            <option value="GroundRetransmitter">GroundRetransmitter</option>
+          </select>
+        </label>
+      </div>
+      <div>
+        <label>Player:
+          <select id="adminPlayer">
+            <option value="1">Player 1</option>
+            <option value="2">Player 2</option>
+            <option value="3">Player 3</option>
+          </select>
+        </label>
+      </div>
+      <div>
+        <label>
+          <input type="checkbox" id="adminPlaceMode">
+          Click map to place
+        </label>
+      </div>
+      <p id="adminMsg" style="font-size:11px;color:#333;"></p>
+    </div>
+
 
   <canvas id="canvas" width="1024" height="1024"></canvas>
   <div id="infoPanel">
@@ -109,6 +138,20 @@ PAGE_TMPL = """
 
     const chkTransmission = document.getElementById("chkTransmission");
     const chkEnemyAA = document.getElementById("chkEnemyAA");
+    
+    const adminUnitType = document.getElementById("adminUnitType");
+    const adminPlayer = document.getElementById("adminPlayer");
+    const adminPlaceModeChk = document.getElementById("adminPlaceMode");
+    const adminMsg = document.getElementById("adminMsg");
+    
+    adminPlaceModeChk.addEventListener("change", () => {
+      adminPlaceMode = adminPlaceModeChk.checked;
+      if (adminPlaceMode) {
+        adminMsg.textContent = "Admin mode ON: click on the map to place unit.";
+      } else {
+        adminMsg.textContent = "";
+      }
+    });
 
     chkTransmission.addEventListener("change", () => {
       showTransmission = chkTransmission.checked;
@@ -124,6 +167,10 @@ PAGE_TMPL = """
     let spawnUavMode = false;
     let spawnUavBaseId = null;
     let spawnUavBaseData = null;
+
+    let adminPlaceMode = false;
+    let adminUnitTypeSel = null;
+    let adminPlayerSel = null;
 
     let placeRtFromKeyboard = false;
     let spawnUavFromKeyboard = false;
@@ -219,6 +266,44 @@ PAGE_TMPL = """
     }
 
     canvas.addEventListener("click", (event) => {
+    // ADMIN PLACE?
+        if (adminPlaceMode) {
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width / rect.width;
+          const scaleY = canvas.height / rect.height;
+          const clickX = (event.clientX - rect.left) * scaleX;
+          const clickY = (event.clientY - rect.top)  * scaleY;
+        
+          fetch("/admin_spawn", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              unit_type: adminUnitType.value,
+              player: adminPlayer.value,
+              x: clickX,
+              y: clickY
+            })
+          })
+          .then(res => res.json())
+          .then(d => {
+            if (d.status === "ok") {
+              adminMsg.textContent = "Spawned " + d.spawned + " for player " + adminPlayer.value;
+              // refresh units so we see it immediately
+              fetchUnits();
+            } else {
+              adminMsg.textContent = d.message || "Error spawning";
+            }
+          })
+          .catch(err => {
+            console.error(err);
+            adminMsg.textContent = "Error spawning";
+          });
+        
+          // don't let the normal click logic run
+          return;
+        }
+
+    
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
       const scaleY = canvas.height / rect.height;
@@ -532,7 +617,10 @@ PAGE_TMPL = """
 
         // 2) draw transmission range for bases and ground retransmitters (toggable)
         if (showTransmission && u.transmissionRange) {
-          if (u.unit_class === "LogHub" || u.unit_class === "GroundRetransmitter") {
+          if (
+          (u.unit_class === "LogHub" || u.unit_class === "GroundRetransmitter") && 
+          u.player === 1
+          ) {
             ctx.beginPath();
             ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
             ctx.strokeStyle = "rgba(0, 200, 0, 0.6)";
@@ -856,6 +944,81 @@ def spawn_uav():
     base.current_spawned_uavs = current_uavs + 1
 
     return jsonify({"status": "ok", "uav_id": lm.id})
+
+@app.route("/admin_spawn", methods=["POST"])
+def admin_spawn():
+    data = request.get_json()
+    unit_type = data.get("unit_type")      # e.g. "LoiteringMunition", "AntiAir", "LogHub", "GroundRetransmitter"
+    player = int(data.get("player", 1))
+    x = float(data.get("x"))
+    y = float(data.get("y"))
+
+    global units, aaUnits, logBases, ground_retransmitters
+
+    if unit_type == "LoiteringMunition":
+        lm = UAVUnits.LoiteringMunition(
+            name=f"LM-admin-{len(units)}",
+            chanceToHit=50,
+            baseSpeed=55,
+            state=UAVUnits.UnitState.Landed,
+            position=(x, y),
+            image="static/images/uav.png",
+            armourType=UAVUnits.ArmourType.Unarmored,
+            player=player,
+            currentWeight=1.7,
+            idleBatteryDrainPerTick=0.0083,
+            moveBatteryDrainPerTick=0.0138,
+            payload=1.0,
+            explosiveType=UAVUnits.ExplosiveType.HEAT
+        )
+        units.append(lm)
+        return jsonify({"status": "ok", "spawned": "LoiteringMunition", "id": lm.id})
+
+    elif unit_type == "AntiAir":
+        aa = AntiAirUnits.AntiAir(
+            name=f"AA-admin-{len(aaUnits)}",
+            chanceToHit=35,
+            baseSpeed=0,
+            state=UAVUnits.UnitState.Idle,
+            position=(x, y),
+            image="static/images/antiAir.png",
+            armourType=UAVUnits.ArmourType.LightArmour,
+            player=player,
+            range=150,
+            ammoCount=5,
+            aimTime=1.0,
+            timeBetweenShots=2.0,
+            AAstate=AntiAirUnits.AAStatus.Idle
+        )
+        aaUnits.append(aa)
+        return jsonify({"status": "ok", "spawned": "AntiAir"})
+
+    elif unit_type == "LogHub":
+        base = LogHub.LogHub(
+            name=f"Base-admin-{len(logBases)}",
+            position=(x, y),
+            image="static/images/base.png",
+            player=player,
+            transmissionRange=300
+        )
+        logBases.append(base)
+        return jsonify({"status": "ok", "spawned": "LogHub", "id": base.id})
+
+    elif unit_type == "GroundRetransmitter":
+        rt = LogHub.GroundRetransmitter(
+            name=f"RT-admin-{len(ground_retransmitters)}",
+            position=(x, y),
+            image="static/images/retransmitter.png",
+            player=player,
+            transmissionRange=200,
+            parent_base_id=-1
+        )
+        ground_retransmitters.append(rt)
+        return jsonify({"status": "ok", "spawned": "GroundRetransmitter"})
+
+    else:
+        return jsonify({"status": "error", "message": "unknown unit type"}), 400
+
 
 def is_uav_in_comm(uav, bases, retransmitters):
     # uav.player must match base.player
