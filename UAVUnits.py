@@ -89,11 +89,12 @@ class Unit:
 class UAV(Unit):
     currentBattery = 100.0
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float):
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float, usedFrequencies: [float]):
         super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player)
         self.currentWeight = currentWeight
         self.idleBatteryDrainPerTick = idleBatteryDrainPerTick
         self.moveBatteryDrainPerTick = moveBatteryDrainPerTick
+        self.usedFrequencies = usedFrequencies
 
     def tick_unit(self, dt: float):
         super().tick_unit(dt)

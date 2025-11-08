@@ -34,3 +34,11 @@ class GroundRetransmitter(GroundStructure):
         super().__init__(name, position, image, player)
         self.transmissionRange = transmissionRange
         self.parent_base_id = parent_base_id
+
+class ElectronicWarfare(GroundStructure):
+
+    def __init__(self, name: str, position: (int,int), image: str, player: int, jammingRange: int, jammingFreq: [float, float]):
+        super().__init__(name, position, image, player)
+        self.jammingRange = jammingRange
+        self.jammingFreq = jammingFreq
+
