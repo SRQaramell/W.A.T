@@ -104,10 +104,16 @@ class UAV(Unit):
             return
 
     def getCurrentBatteryDrainPerTick(self):
+        modifier = 1
+        if isinstance(self, RetransmiterUAV):
+            if self.is_retransmitting:
+                modifier = 3
+            else:
+                modifier = 1
         if self.state == UnitState.Idle:
-            return self.idleBatteryDrainPerTick #* getWindModifiers(self.positionX, self.positionY)
+            return self.idleBatteryDrainPerTick * modifier#* getWindModifiers(self.positionX, self.positionY)
         if self.state == UnitState.Moving:
-            return self.moveBatteryDrainPerTick #* getWindModifiers(self.positionX, self.positionY)
+            return self.moveBatteryDrainPerTick * modifier#* getWindModifiers(self.positionX, self.positionY)
         return 0.0
 
 class LoiteringMunition(UAV):
@@ -134,8 +140,26 @@ def isHit(attacker: UAV, attacked: Unit):
 
 class RetransmiterUAV(UAV):
 
-    def __init__(self, retransmisionRange: float):
-        self.retransmisionRange = retransmisionRange
+    def __init__(self,
+                 name: str,
+                 chanceToHit: int,
+                 baseSpeed: float,
+                 state,
+                 position: (int, int),
+                 image: str,
+                 armourType,
+                 player: int,
+                 currentWeight: float,
+                 idleBatteryDrainPerTick: float,
+                 moveBatteryDrainPerTick: float,
+                 transmissionRange: float):
+        # call normal UAV init
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image,
+                         armourType, player, currentWeight,
+                         idleBatteryDrainPerTick, moveBatteryDrainPerTick)
+        self.transmissionRange = transmissionRange
+        # NEW: start turned off
+        self.is_retransmitting = False
 
 class LogisticUAV(UAV):
 

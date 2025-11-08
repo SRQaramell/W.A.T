@@ -104,6 +104,7 @@ PAGE_TMPL = """
             <option value="AntiAir">AntiAir</option>
             <option value="LogHub">LogHub</option>
             <option value="GroundRetransmitter">GroundRetransmitter</option>
+            <option value="RetransmiterUAV">RetransmiterUAV</option>
           </select>
         </label>
       </div>
@@ -184,6 +185,10 @@ PAGE_TMPL = """
     let spawnUavBaseId = null;
     let spawnUavBaseData = null;
 
+    let spawnRtUavMode = false;
+    let spawnRtUavBaseId = null;
+    let spawnRtUavBaseData = null;
+
     let adminPlaceMode = false;
     let adminUnitTypeSel = null;
     let adminPlayerSel = null;
@@ -200,6 +205,12 @@ PAGE_TMPL = """
       placeRetransmitterMode = true;
       placingBaseId = baseId;
       placingBaseData = baseData;
+    }
+
+    function startRtUavSpawn(baseId, baseData) {
+      spawnRtUavMode = true;
+      spawnRtUavBaseId = baseId;
+      spawnRtUavBaseData = baseData;
     }
 
     function getSelectedUnit() {
@@ -411,6 +422,29 @@ PAGE_TMPL = """
     
         return;
       }
+      
+        if (spawnRtUavMode && spawnRtUavBaseId !== null) {
+          fetch("/spawn_retrans_uav", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              base_id: spawnRtUavBaseId,
+              x: clickX,
+              y: clickY
+            })
+          })
+          .then(res => res.json())
+          .then(d => {
+            if (d.status !== "ok") {
+              alert(d.message || "Error spawning retrans UAV");
+            }
+            fetchUnits();
+          })
+          .catch(console.error);
+        
+          spawnRtUavMode = false;
+          return;
+        }
 
       // 1. did we click on a unit?
       let clickedUnit = null;
@@ -571,9 +605,23 @@ PAGE_TMPL = """
           html += `<button id="placeRtBtn">Place retransmitter</button>`;
           html += `<button id="spawnUavBtn" ${curr >= max ? "disabled" : ""}>Spawn loitering munition</button>`;
         
+          html += `<hr>`;
+          html += `<p>Air retransmitters: ${u.current_air_retransmitters}/${u.max_air_retransmitters}</p>`;
+          html += `<button id="spawnRtUavBtn" ${u.current_air_retransmitters >= u.max_air_retransmitters ? "disabled" : ""}>Spawn retrans UAV</button>`;
+        
           if (wasPlacingThisBase) {
             html += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
           }
+        }
+
+        const isRtUav = u.unit_class === "RetransmiterUAV";
+        if (isRtUav) {
+          html += `
+            <button id="toggleRtUavBtn">
+              ${u.is_retransmitting ? "Disable retransmission" : "Enable retransmission"}
+            </button>
+            <p>Range: ${u.transmissionRange ?? "?"}</p>
+          `;
         }
 
       infoPanel.innerHTML = html;
@@ -591,6 +639,7 @@ PAGE_TMPL = """
               }
             });
           }
+
         
           const uavBtn = document.getElementById("spawnUavBtn");
           if (uavBtn && !(u.current_spawned_uavs >= u.max_spawned_uavs)) {
@@ -601,6 +650,44 @@ PAGE_TMPL = """
             });
           }
         }
+        
+          const rtUavBtn = document.getElementById("spawnRtUavBtn");
+          if (rtUavBtn && u.current_air_retransmitters < u.max_air_retransmitters) {
+            rtUavBtn.addEventListener("click", () => {
+              // put UI into "next map click will spawn air retrans UAV for this base" mode
+              startRtUavSpawn(u.id, u);
+              // optional hint
+              infoPanel.innerHTML += `<p id="spawnRtUavMsg">Click on the map to place retrans UAV…</p>`;
+            });
+          }
+        
+        if (u.unit_class === "RetransmiterUAV") {
+          const btn = document.getElementById("toggleRtUavBtn");
+          if (btn) {
+            btn.addEventListener("click", () => {
+              fetch("/toggle_uav_retransmitter", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  uav_id: u.id,
+                  // flip it
+                  active: !u.is_retransmitting
+                })
+              })
+              .then(r => r.json())
+              .then(d => {
+                if (d.status === "ok") {
+                  // reload units so the panel shows the new state
+                  fetchUnits();
+                } else {
+                  alert(d.message || "Could not toggle retransmitter");
+                }
+              })
+              .catch(console.error);
+            });
+          }
+        }
+        
     }
 
     function drawUnits() {
@@ -646,6 +733,22 @@ PAGE_TMPL = """
             ctx.fill();
           }
         }
+        
+        if (
+          showTransmission &&
+          u.unit_class === "RetransmiterUAV" &&
+          u.is_retransmitting &&
+          u.transmissionRange &&
+          u.player === localPlayer  // keep it consistent with how you show friendly ranges
+        ) {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(0, 200, 0, 0.6)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "rgba(0, 200, 0, 0.05)";
+          ctx.fill();
+        }
 
         // draw unit/base icon
         const img = u._img;
@@ -653,18 +756,10 @@ PAGE_TMPL = """
           ctx.drawImage(img, u.x - half, u.y - half, size, size);
           ctx.save();
           ctx.globalAlpha = 0.35;
-          if (u.player === 1) ctx.fillStyle = "blue";
-          else if (u.player === 2) ctx.fillStyle = "red";
-          else ctx.fillStyle = "gray";
-          ctx.fillRect(u.x - half, u.y - half, size, size);
           ctx.restore();
         } else {
           ctx.beginPath();
           ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
-          if (u.player === 1) ctx.fillStyle = "blue";
-          else if (u.player === 2) ctx.fillStyle = "red";
-          else ctx.fillStyle = "gray";
-          ctx.fill();
         }
 
         if (u.id === selectedUnitId) {
@@ -705,11 +800,11 @@ PAGE_TMPL = """
 
 selected_unit_id = None  # server-side info about selection
 
-units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
+units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
 
-aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
+aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/ICONS/AIR DEF ENEMY.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
 
-logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/images/base.png",1, 300)]
+logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/ICONS/HQ_ALLY.png",1, 300)]
 
 ground_retransmitters = []
 
@@ -774,6 +869,12 @@ def get_units():
                 "moveBatteryDrainPerTick": u.moveBatteryDrainPerTick,
             })
 
+        if isinstance(u, UAVUnits.RetransmiterUAV):
+            data.update({
+                "transmissionRange": u.transmissionRange,
+                "is_retransmitting": getattr(u, "is_retransmitting", False)
+            })
+
         # extra fields for LoiteringMunition
         if isinstance(u, UAVUnits.LoiteringMunition):
             data.update({
@@ -799,7 +900,9 @@ def get_units():
                 "transmissionRange": u.transmissionRange,
                 "available_retransmitters": getattr(u, "available_retransmitters",0),
                 "current_spawned_uavs": getattr(u, "current_spawned_uavs", 0),
-                "max_spawned_uavs": getattr(u, "max_spawned_uavs", 5)
+                "max_spawned_uavs": getattr(u, "max_deployed_uavs", 5),
+                "current_air_retransmitters": getattr(u, "current_air_retransmitters", 0),
+                "max_air_retransmitters": getattr(u, "max_air_retransmitters", 2)
             })
 
         if isinstance(u, LogHub.GroundRetransmitter):
@@ -900,7 +1003,7 @@ def place_retransmitter():
     retrans = LogHub.GroundRetransmitter(
         name=f"RT-{base_id}",
         position=(x, y),
-        image="static/images/retransmitter.png",
+        image="static/ICONS/ŁĄCZNOŚĆ ALLY.png",
         player=base.player,
         transmissionRange=200,
         parent_base_id=base_id
@@ -925,7 +1028,7 @@ def spawn_uav():
         return jsonify({"status": "error", "message": "base not found"}), 404
 
     # quota check
-    max_uavs = getattr(base, "max_spawned_uavs", 5)
+    max_uavs = getattr(base, "max_deployed_uavs", 5)
     current_uavs = getattr(base, "current_spawned_uavs", 0)
     if current_uavs >= max_uavs:
         return jsonify({"status": "error", "message": "this base has no UAVs left"}), 400
@@ -937,7 +1040,7 @@ def spawn_uav():
         baseSpeed=55,
         state=UAVUnits.UnitState.Idle,
         position=(base.positionX, base.positionY),
-        image="static/images/uav.png",
+        image="static/ICONS/UAV ALLY.png",
         armourType=UAVUnits.ArmourType.Unarmored,
         player=base.player,
         currentWeight=1.7,
@@ -961,6 +1064,73 @@ def spawn_uav():
 
     return jsonify({"status": "ok", "uav_id": lm.id})
 
+@app.route("/spawn_retrans_uav", methods=["POST"])
+def spawn_retrans_uav():
+    data = request.get_json()
+    base_id = data.get("base_id")
+    target_x = data.get("x")
+    target_y = data.get("y")
+
+    base = next((b for b in logBases if b.id == base_id), None)
+    if base is None:
+        return jsonify({"status": "error", "message": "base not found"}), 404
+
+    # quota: 2 per base (or whatever is in the base)
+    current_air = getattr(base, "current_air_retransmitters", 0)
+    max_air = getattr(base, "max_air_retransmitters", 2)
+    if current_air >= max_air:
+        return jsonify({"status": "error", "message": "this base has no retransmitting UAVs left"}), 400
+
+    # create at base position
+    ruav = UAVUnits.RetransmiterUAV(
+        name=f"RT-UAV-{base.id}-{current_air+1}",
+        chanceToHit=0,
+        baseSpeed=55,
+        state=UAVUnits.UnitState.Idle,
+        position=(base.positionX, base.positionY),
+        image="static/images/uav.png",
+        armourType=UAVUnits.ArmourType.Unarmored,
+        player=base.player,
+        currentWeight=1.7,
+        idleBatteryDrainPerTick=0.0083,
+        moveBatteryDrainPerTick=0.0138,
+        transmissionRange=200.0   # pick your radius
+    )
+
+    # remember parent base if you want later reclamation
+    ruav.parent_base_id = base.id
+
+    # optionally send it to user’s click
+    if target_x is not None and target_y is not None:
+        ruav.move_unit((target_x, target_y))
+
+    units.append(ruav)
+
+    # consume slot
+    base.current_air_retransmitters = current_air + 1
+
+    return jsonify({"status": "ok", "uav_id": ruav.id})
+
+
+@app.route("/toggle_uav_retransmitter", methods=["POST"])
+def toggle_uav_retransmitter():
+    data = request.get_json()
+    uav_id = data.get("uav_id")
+    active = bool(data.get("active", True))
+
+    # find the UAV
+    uav = next(
+        (u for u in units
+         if getattr(u, "id", None) == uav_id and isinstance(u, UAVUnits.RetransmiterUAV)),
+        None
+    )
+    if uav is None:
+        return jsonify({"status": "error", "message": "retransmitter UAV not found"}), 404
+
+    uav.is_retransmitting = active
+    return jsonify({"status": "ok", "active": uav.is_retransmitting})
+
+
 @app.route("/admin_spawn", methods=["POST"])
 def admin_spawn():
     data = request.get_json()
@@ -972,13 +1142,17 @@ def admin_spawn():
     global units, aaUnits, logBases, ground_retransmitters
 
     if unit_type == "LoiteringMunition":
+        if player == 1:
+            img = "static/ICONS/UAV ALLY.png"
+        else:
+            img = "static/ICONS/UAV ENEMY.png"
         lm = UAVUnits.LoiteringMunition(
             name=f"LM-admin-{len(units)}",
             chanceToHit=50,
             baseSpeed=55,
             state=UAVUnits.UnitState.Landed,
             position=(x, y),
-            image="static/images/uav.png",
+            image=img,
             armourType=UAVUnits.ArmourType.Unarmored,
             player=player,
             currentWeight=1.7,
@@ -991,13 +1165,17 @@ def admin_spawn():
         return jsonify({"status": "ok", "spawned": "LoiteringMunition", "id": lm.id})
 
     elif unit_type == "AntiAir":
+        if player == 1:
+            img = "static/ICONS/AIR DEF ALLY.png"
+        else:
+            img = "static/ICONS/AIR DEF ENEMY.png"
         aa = AntiAirUnits.AntiAir(
             name=f"AA-admin-{len(aaUnits)}",
             chanceToHit=35,
             baseSpeed=0,
             state=UAVUnits.UnitState.Idle,
             position=(x, y),
-            image="static/images/antiAir.png",
+            image=img,
             armourType=UAVUnits.ArmourType.LightArmour,
             player=player,
             range=150,
@@ -1010,10 +1188,14 @@ def admin_spawn():
         return jsonify({"status": "ok", "spawned": "AntiAir"})
 
     elif unit_type == "LogHub":
+        if player == 1:
+            img = "static/ICONS/HQ_ALLY.png"
+        else:
+            img = "static/ICONS/HQ_ENEMY.png"
         base = LogHub.LogHub(
             name=f"Base-admin-{len(logBases)}",
             position=(x, y),
-            image="static/images/base.png",
+            image=img,
             player=player,
             transmissionRange=300
         )
@@ -1021,16 +1203,44 @@ def admin_spawn():
         return jsonify({"status": "ok", "spawned": "LogHub", "id": base.id})
 
     elif unit_type == "GroundRetransmitter":
+        if player == 1:
+            img = "static/ICONS/ŁĄCZNOŚĆ ALLY.png"
+        else:
+            img = "static/ICONS/ŁĄCZNOŚĆ ENEMY.png"
         rt = LogHub.GroundRetransmitter(
             name=f"RT-admin-{len(ground_retransmitters)}",
             position=(x, y),
-            image="static/images/retransmitter.png",
+            image=img,
             player=player,
             transmissionRange=200,
             parent_base_id=-1
         )
         ground_retransmitters.append(rt)
         return jsonify({"status": "ok", "spawned": "GroundRetransmitter"})
+
+    elif unit_type == "RetransmiterUAV":
+        if player == 1:
+            img = "static/ICONS/ROTOR ALLY.png"
+        else:
+            img = "static/ICONS/ROTOR ENEMY.png"
+
+        ruav = UAVUnits.RetransmiterUAV(
+            name=f"RT-UAV-admin-{len(units)}",
+            chanceToHit=0,
+            baseSpeed=55,
+            state=UAVUnits.UnitState.Landed,
+            position=(x, y),
+            image=img,
+            armourType=UAVUnits.ArmourType.Unarmored,
+            player=player,
+            currentWeight=1.7,
+            idleBatteryDrainPerTick=0.0083,
+            moveBatteryDrainPerTick=0.0138,
+            transmissionRange=200.0
+        )
+        units.append(ruav)
+        return jsonify({"status": "ok", "spawned": "RetransmiterUAV", "id": ruav.id})
+
 
     else:
         return jsonify({"status": "error", "message": "unknown unit type"}), 400
@@ -1053,6 +1263,20 @@ def is_uav_in_comm(uav, bases, retransmitters):
             dist = math.hypot(dx, dy)
             if dist <= r.transmissionRange:
                 return True
+
+    # 3. NEW: airborne retransmitters (UAVs)
+    # we use the global `units` list
+    for other in units:
+        if other is uav:
+            continue
+        if isinstance(other, UAVUnits.RetransmiterUAV) \
+           and getattr(other, "is_retransmitting", False) \
+           and other.player == uav.player:
+            dx = uav.positionX - other.positionX
+            dy = uav.positionY - other.positionY
+            if math.hypot(dx, dy) <= other.transmissionRange:
+                return True
+
     return False
 
 def game_loop():
