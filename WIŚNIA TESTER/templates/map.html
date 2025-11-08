@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mapa – Anteny</title>
+
+  <!-- Leaflet -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <style>
+    html, body, #map { height: 100%; margin: 0; }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex; gap: 8px; align-items: center;
+      background: white; padding: 6px; border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .add-antenna-btn {
+      width: 44px; height: 44px; line-height: 44px;
+      border: none; border-radius: 10px;
+      background: white; box-shadow: 0 2px 8px rgba(0,0,0,.2);
+      font-size: 24px; font-weight: 700; cursor: pointer;
+    }
+    .add-antenna-btn.active { background: #e6f7ff; outline: 2px solid #91d5ff }
+    .cursor-crosshair { cursor: crosshair !important }
+
+    /* Ikony anten */
+    .ant-icon {
+      transform: translate(-50%, -100%);
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 2px solid rgba(0,0,0,.25);
+      box-shadow: 0 1px 4px rgba(0,0,0,.2);
+      font: 700 12px/1 system-ui, sans-serif; color: #fff;
+      text-shadow: 0 1px 1px rgba(0,0,0,.35);
+      user-select: none;
+    }
+    .g2 { background: #6b7280; }  /* szary */
+    .g3 { background: #2563eb; }  /* niebieski */
+    .g4 { background: #16a34a; }  /* zielony */
+    .g5 { background: #dc2626; }  /* czerwony */
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script>
+    // --- Inicjalizacja mapy (odblokowana) ---
+    const map = L.map('map', {
+      center: [51.1079, 17.0385], // start: Wrocław
+      zoom: 7,                     // szeroki widok
+      zoomControl: true,           // przyciski +/-
+      scrollWheelZoom: true,
+      doubleClickZoom: true,
+      boxZoom: true,
+      keyboard: true,
+      touchZoom: true,
+      dragging: true
+    });
+
+    // Warstwa OSM
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      minZoom: 2,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/">OSM</a>'
+    }).addTo(map);
+
+    const antennasLayer = L.layerGroup().addTo(map);
+
+    // --- Fabryka ikon anten (2G–5G) ---
+    function iconForCategory(category) {
+      const g = Number(category);
+      const cls = g === 2 ? 'g2' : g === 3 ? 'g3' : g === 4 ? 'g4' : 'g5';
+      const label = `${g}G`;
+      return L.divIcon({
+        className: `ant-icon ${cls}`,
+        html: `<span>${label}</span>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 34],
+        popupAnchor: [0, -34]
+      });
+    }
+
+    // --- Klasa Antenna ---
+    class Antenna {
+      constructor({ id, name, lat, lng, radius, battery, category, height }) {
+        this.id = id;
+        this.name = name;
+        this.latlng = L.latLng(lat, lng);
+        this.radius = radius;
+        this.battery = battery;
+        this.category = category;
+        this.height = height;
+
+        this.marker = L.marker(this.latlng, { icon: iconForCategory(this.category) })
+          .bindPopup(this._popupHtml());
+
+        this.circle = L.circle(this.latlng, { radius: this.radius, fillOpacity: 0.15 });
+        this.group = L.layerGroup([this.marker, this.circle]).addTo(antennasLayer);
+
+        this._attachHandlers();
+      }
+
+      _popupHtml() {
+        const { lat, lng } = this.latlng;
+        return `
+          <b>${this.name}</b><br/>
+          Typ: <b>${this.category}G</b><br/>
+          Bateria: ${this.battery}%<br/>
+          Wysokość: ${this.height != null ? this.height.toFixed(1) + ' m n.p.m.' : '—'}<br/>
+          Lat: ${lat.toFixed(5)}, Lng: ${lng.toFixed(5)}<br/>
+          Promień: ${this.radius} m<br/>
+          <button data-action="delete" style="margin-top:6px">Usuń</button>
+        `;
+      }
+
+      _attachHandlers() {
+        this.marker.on('popupopen', (e) => {
+          const btn = e.popup.getElement().querySelector('button[data-action="delete"]');
+          if (btn) btn.onclick = async () => {
+            const ok = await deleteAntenna(this.id);
+            if (ok) antennasLayer.removeLayer(this.group);
+          };
+        });
+      }
+    }
+
+    // --- API helpers ---
+    async function apiGetAntennas() {
+      const r = await fetch('/api/antennas');
+      return r.json();
+    }
+    async function apiCreateAntenna(payload) {
+      const r = await fetch('/api/antennas', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!r.ok) throw new Error('POST /api/antennas failed');
+      return r.json();
+    }
+    async function deleteAntenna(id) {
+      const r = await fetch('/api/antennas/' + id, { method: 'DELETE' });
+      return r.status === 204;
+    }
+
+    async function loadAntennas() {
+      const data = await apiGetAntennas();
+      antennasLayer.clearLayers();
+      data.forEach(a => new Antenna(a));
+    }
+
+    // --- Toolbar: wybór typu i przycisk "+"
+    let selectedCategory = 5;
+
+    const ToolbarControl = L.Control.extend({
+      options: { position: 'bottomright' },
+      onAdd: function() {
+        const wrap = L.DomUtil.create('div', 'toolbar');
+
+        const select = L.DomUtil.create('select', '', wrap);
+        ['2','3','4','5'].forEach(g => {
+          const opt = document.createElement('option');
+          opt.value = g; opt.textContent = g + 'G';
+          if (g === String(selectedCategory)) opt.selected = true;
+          select.appendChild(opt);
+        });
+        select.onchange = () => { selectedCategory = Number(select.value); };
+
+        const btn = L.DomUtil.create('button', 'add-antenna-btn', wrap);
+        btn.textContent = '+';
+        btn.title = 'Tryb dodawania anten';
+
+        L.DomEvent.disableClickPropagation(wrap);
+        L.DomEvent.disableScrollPropagation(wrap);
+        L.DomEvent.on(btn, 'click', () => toggleAddMode(btn));
+
+        return wrap;
+      }
+    });
+    map.addControl(new ToolbarControl());
+
+    // --- Tryb dodawania anten ---
+    let addMode = false;
+    function toggleAddMode(btn) {
+      addMode = !addMode;
+      btn.classList.toggle('active', addMode);
+      document.getElementById('map').classList.toggle('cursor-crosshair', addMode);
+      if (addMode) map.on('click', handleAddClick);
+      else map.off('click', handleAddClick);
+    }
+
+    async function handleAddClick(e) {
+      const payload = {
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+        radius: 300,
+        category: selectedCategory,
+        battery: 100
+      };
+      try {
+        const saved = await apiCreateAntenna(payload);
+        new Antenna(saved);
+      } catch (err) {
+        console.error(err);
+        alert('Nie udało się dodać anteny.');
+      }
+    }
+
+    // Start
+    loadAntennas();
+  </script>
+</body>
+</html>
