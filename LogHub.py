@@ -18,6 +18,7 @@ class LogHub(GroundStructure):
 
 class GroundRetransmitter(GroundStructure):
 
-    def __init__(self, name: str, position: (int,int), image: str, player: int, transmissionRange: int):
+    def __init__(self, name: str, position: (int,int), image: str, player: int, transmissionRange: int, parent_base_id: int):
         super().__init__(name, position, image, player)
         self.transmissionRange = transmissionRange
+        self.parent_base_id = parent_base_id

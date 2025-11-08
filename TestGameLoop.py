@@ -67,9 +67,44 @@ PAGE_TMPL = """
     const ctx = canvas.getContext("2d");
     const infoPanel = document.getElementById("unitInfo");
 
+    let placeRetransmitterMode = false;
+    let placingBaseId = null;
+    let placingBaseData = null;
+
     let units = [];             // will be fetched from server
     let selectedUnitId = null;
+    let selectedUnitSnapshot = null;
     let moveTarget = null;      // { x:…, y:… } or null
+
+    function startRetransmitterPlacing(baseId, baseData) {
+      placeRetransmitterMode = true;
+      placingBaseId = baseId;
+      placingBaseData = baseData;
+    }
+
+    function makeUnitSnapshot(u) {
+      // keep only stable fields that show in panel
+      return {
+        id: u.id,
+        name: u.name,
+        unit_class: u.unit_class,
+        player: u.player,
+        transmissionRange: u.transmissionRange,
+        x: u.x,
+        y: u.y
+      };
+    }
+    
+    function isSameUnitSnapshot(a, b) {
+      return a.id === b.id &&
+             a.name === b.name &&
+             a.unit_class === b.unit_class &&
+             a.player === b.player &&
+             a.transmissionRange === b.transmissionRange &&
+             a.x === b.x &&
+             a.y === b.y;
+    }
+
 
     function fetchUnits() {
       fetch("/units")
@@ -84,15 +119,19 @@ PAGE_TMPL = """
             u._img = img;
           });
     
-          // 👇 NEW: if we have something selected, show its latest data
           if (selectedUnitId !== null) {
             const selected = units.find(u => u.id === selectedUnitId);
             if (selected) {
-              updateInfoPanel(selected);
+              if (!selectedUnitSnapshot || !isSameUnitSnapshot(selectedUnitSnapshot, selected)) {
+                updateInfoPanel(selected);
+                // store fresh snapshot (only fields we care about)
+                selectedUnitSnapshot = makeUnitSnapshot(selected);
+              }
             } else {
               // selected unit disappeared
               infoPanel.innerHTML = "No unit selected.";
               selectedUnitId = null;
+              selectedUnitSnapshot = null;
             }
           }
         })
@@ -106,6 +145,50 @@ PAGE_TMPL = """
         
           const clickX = (event.clientX - rect.left) * scaleX;
           const clickY = (event.clientY - rect.top)  * scaleY;
+
+          // 0. placing retransmitter?
+          if (placeRetransmitterMode && placingBaseId !== null) {
+            // optional client-side check to give faster feedback
+            if (placingBaseData && placingBaseData.transmissionRange) {
+              const dx = clickX - placingBaseData.x;
+              const dy = clickY - placingBaseData.y;
+              const dist = Math.sqrt(dx*dx + dy*dy);
+              if (dist > placingBaseData.transmissionRange) {
+                alert("Spot outside base transmission range");
+                return;
+              }
+            }
+        
+            fetch("/place_retransmitter", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                base_id: placingBaseId,
+                x: clickX,
+                y: clickY
+              })
+            })
+            .then(res => res.json())
+            .then(d => {
+              if (d.status === "ok") {
+                placeRetransmitterMode = false;
+                const prevBaseId = placingBaseId;
+                placingBaseId = null;
+                placingBaseData = null;
+                fetchUnits();
+                // try to uncheck the box if the same base is still shown
+                const chk = document.getElementById("placeRtChk");
+                const hint = document.getElementById("placeHint");
+                if (chk) chk.checked = false;
+                if (hint) hint.textContent = "";
+              } else {
+                alert(d.message || "Error placing retransmitter");
+              }
+            })
+            .catch(err => console.error(err));
+        
+            return; // stop normal click handling
+          }
         
           // 1. did we click on a unit?
           let clickedUnit = null;
@@ -173,6 +256,10 @@ PAGE_TMPL = """
 
 
     function updateInfoPanel(u) {
+      const isBase = u.unit_class === "LogHub";
+      const wasPlacingThisBase =
+        placeRetransmitterMode && placingBaseId === u.id;
+    
       let html = "<ul>";
       for (const key in u) {
         if (u.hasOwnProperty(key) && key !== "_img") {
@@ -180,8 +267,32 @@ PAGE_TMPL = """
         }
       }
       html += "</ul>";
+    
+      if (isBase) {
+        html += `<button id="placeRtBtn">Place retransmitter</button>`;
+        if (wasPlacingThisBase) {
+          html += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
+        }
+      }
+    
       infoPanel.innerHTML = html;
+    
+      if (isBase) {
+        const btn = document.getElementById("placeRtBtn");
+        btn.addEventListener("click", () => {
+          startRetransmitterPlacing(u.id, u);
+          // show message without re-rendering whole panel
+          const p = document.getElementById("placeMsg");
+          if (p) {
+            p.textContent = "Click on the map inside the base range to place retransmitter…";
+          } else {
+            infoPanel.innerHTML += `<p id="placeMsg">Click on the map inside the base range to place retransmitter…</p>`;
+          }
+        });
+      }
     }
+
+
 
         function drawUnits() {
           ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -209,6 +320,17 @@ PAGE_TMPL = """
               ctx.lineWidth = 2;
               ctx.stroke();
               ctx.fillStyle = "rgba(0, 200, 0, 0.05)";
+              ctx.fill();
+            }
+        
+            // 3) draw transmission range for GroundRetransmitter
+            if (u.unit_class === "GroundRetransmitter" && u.transmissionRange) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, u.transmissionRange, 0, Math.PI * 2);
+              ctx.strokeStyle = "rgba(255, 165, 0, 0.6)";  // orange-ish
+              ctx.lineWidth = 2;
+              ctx.stroke();
+              ctx.fillStyle = "rgba(255, 165, 0, 0.05)";
               ctx.fill();
             }
         
@@ -281,7 +403,9 @@ units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Land
 
 aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
 
-logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), 300, "static/images/base.png",1)]
+logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/images/base.png",1, 300)]
+
+ground_retransmitters = []
 
 pending_attacks = {}
 
@@ -316,7 +440,7 @@ def get_units():
     unit_data = []
 
     # include UAVs, AA and bases
-    all_units = units + aaUnits + logBases
+    all_units = units + aaUnits + logBases + ground_retransmitters
 
     for u in all_units:
         # base dictionary common for everything
@@ -369,6 +493,12 @@ def get_units():
                 "transmissionRange": u.transmissionRange
             })
 
+        if isinstance(u, LogHub.GroundRetransmitter):
+            data.update({
+                "transmissionRange": u.transmissionRange,
+                "parent_base_id": u.parent_base_id
+            })
+
         unit_data.append(data)
 
     return jsonify(unit_data)
@@ -397,7 +527,7 @@ def move_unit():
         if u.id == unit_id and u.player == PLAYER1:
 
             if isinstance(u, UAVUnits.UAV):
-                if not is_uav_in_comm(u, logBases):
+                if not is_uav_in_comm(u, logBases, ground_retransmitters):
                     return jsonify({"status": "error", "message": "UAV out of transmission range"}), 400
 
             u.move_unit((x, y))
@@ -434,7 +564,45 @@ def attack_unit():
 
     return jsonify({"status": "ok", "message": "attack order stored"})
 
-def is_uav_in_comm(uav, bases):
+@app.route("/place_retransmitter", methods=["POST"])
+def place_retransmitter():
+    data = request.get_json()
+    base_id = data.get("base_id")
+    x = data.get("x")
+    y = data.get("y")
+
+    # find the base
+    base = next((b for b in logBases if b.id == base_id), None)
+    if base is None:
+        return jsonify({"status": "error", "message": "base not found"}), 404
+
+    # count current retransmitters for this base
+    current_for_base = [r for r in ground_retransmitters if r.parent_base_id == base_id]
+    if len(current_for_base) >= 3:
+        return jsonify({"status": "error", "message": "this base already has 3 retransmitters"}), 400
+
+    # check that (x, y) is inside base transmission range
+    dx = x - base.positionX
+    dy = y - base.positionY
+    dist = math.hypot(dx, dy)
+    if dist > base.transmissionRange:
+        return jsonify({"status": "error", "message": "point outside base transmission range"}), 400
+
+    # create retransmitter — choose whatever image you have
+    retrans = LogHub.GroundRetransmitter(
+        name=f"RT-{base_id}-{len(current_for_base)+1}",
+        position=(x, y),
+        image="static/images/retransmitter.png",
+        player=base.player,
+        transmissionRange=200,  # or base.transmissionRange, up to you
+        parent_base_id=base_id
+    )
+    ground_retransmitters.append(retrans)
+
+    return jsonify({"status": "ok"})
+
+
+def is_uav_in_comm(uav, bases, retransmitters):
     # uav.player must match base.player
     for b in bases:
         if b.player == uav.player:
@@ -442,6 +610,14 @@ def is_uav_in_comm(uav, bases):
             dy = uav.positionY - b.positionY
             dist = math.hypot(dx, dy)
             if dist <= b.transmissionRange:
+                return True
+
+    for r in retransmitters:
+        if r.player == uav.player:
+            dx = uav.positionX - r.positionX
+            dy = uav.positionY - r.positionY
+            dist = math.hypot(dx, dy)
+            if dist <= r.transmissionRange:
                 return True
     return False
 
@@ -451,7 +627,7 @@ def game_loop():
     while True:
         for u in units:
             if isinstance(u, UAVUnits.UAV):
-                if not is_uav_in_comm(u, logBases):
+                if not is_uav_in_comm(u, logBases, ground_retransmitters):
                     u.destination = None
                     u.state = UAVUnits.UnitState.Idle
                     u.tick_unit(dt)
@@ -506,4 +682,4 @@ threading.Thread(target=game_loop, daemon=True).start()
 
 if __name__ == "__main__":
     # run: python app.py
-    app.run(debug=True)
+    app.run(debug=False)
