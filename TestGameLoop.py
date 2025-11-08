@@ -234,18 +234,22 @@ PAGE_TMPL = """
         x: u.x,
         y: u.y
       };
+    
+      // bases: we care about counters
       if (u.unit_class === "LogHub") {
         snap.available_retransmitters = u.available_retransmitters;
+        snap.current_spawned_uavs = u.current_spawned_uavs;
+        snap.max_spawned_uavs = u.max_spawned_uavs;
+        snap.current_air_retransmitters = u.current_air_retransmitters;
+        snap.max_air_retransmitters = u.max_air_retransmitters;
       }
-      if (u.unit_class === "UAV" ||
-            u.unit_class === "LoiteringMunition" ||
-            u.unit_class === "RetransmiterUAV") {
-        snap.currentBattery = u.currentBattery;
-        snap.state = u.state;
-      }
+    
+      // IMPORTANT: do NOT put battery/state/is_retransmitting here
+      // for UAVs/retrans UAVs, because that changes every tick and will
+      // force a full panel rebuild.
       return snap;
     }
-
+    
     function isSameUnitSnapshot(a, b) {
       let same =
         a.id === b.id &&
@@ -255,18 +259,22 @@ PAGE_TMPL = """
         a.transmissionRange === b.transmissionRange &&
         a.x === b.x &&
         a.y === b.y;
+    
       if (a.unit_class === "LogHub") {
-        same = same && a.available_retransmitters === b.available_retransmitters;
+        same =
+          same &&
+          a.available_retransmitters === b.available_retransmitters &&
+          a.current_spawned_uavs === b.current_spawned_uavs &&
+          a.max_spawned_uavs === b.max_spawned_uavs &&
+          a.current_air_retransmitters === b.current_air_retransmitters &&
+          a.max_air_retransmitters === b.max_air_retransmitters;
       }
-        if (a.unit_class === "UAV" ||
-            a.unit_class === "LoiteringMunition" ||
-            a.unit_class === "RetransmiterUAV") {
-          same = same &&
-            a.currentBattery === b.currentBattery &&
-            a.state === b.state;
-        }
+    
+      // NOTE: we purposely do NOT compare battery/state for UAVs here
+    
       return same;
     }
+
 
     function fetchUnits() {
       fetch("/units")
@@ -278,19 +286,25 @@ PAGE_TMPL = """
             img.src = u.image;
             u._img = img;
           });
-          if (selectedUnitId !== null) {
-            const selected = units.find(u => u.id === selectedUnitId);
-            if (selected) {
-              if (!selectedUnitSnapshot || !isSameUnitSnapshot(selectedUnitSnapshot, selected)) {
-                updateInfoPanel(selected);
-                selectedUnitSnapshot = makeUnitSnapshot(selected);
+            if (selectedUnitId !== null) {
+              const selected = units.find(u => u.id === selectedUnitId);
+              if (selected) {
+                // always refresh fast-changing stuff for retrans UAV
+                if (selected.unit_class === "RetransmiterUAV") {
+                  updateInfoPanelDynamic(selected);
+                }
+            
+                // rebuild whole panel only if structure actually changed
+                if (!selectedUnitSnapshot || !isSameUnitSnapshot(selectedUnitSnapshot, selected)) {
+                  updateInfoPanel(selected);
+                  selectedUnitSnapshot = makeUnitSnapshot(selected);
+                }
+              } else {
+                infoPanel.innerHTML = "No unit selected.";
+                selectedUnitId = null;
+                selectedUnitSnapshot = null;
               }
-            } else {
-              infoPanel.innerHTML = "No unit selected.";
-              selectedUnitId = null;
-              selectedUnitSnapshot = null;
             }
-          }
           return units;
         })
         .catch(err => console.error("Failed to fetch units:", err));
@@ -620,6 +634,13 @@ PAGE_TMPL = """
 
         const isRtUav = u.unit_class === "RetransmiterUAV";
         if (isRtUav) {
+          // dynamic placeholder
+          html += `<div id="unitInfoDynamic">
+            <p>Battery: ${u.currentBattery ?? "?"}%</p>
+            <p>State: ${u.state ?? "?"}</p>
+            <p>Retransmitting: ${u.is_retransmitting ? "yes" : "no"}</p>
+          </div>`;
+        
           html += `
             <button id="toggleRtUavBtn">
               ${u.is_retransmitting ? "Disable retransmission" : "Enable retransmission"}
@@ -693,6 +714,24 @@ PAGE_TMPL = """
         }
         
     }
+    
+    function updateInfoPanelDynamic(u) {
+      // this is only for panels that have the dynamic div
+      const d = document.getElementById("unitInfoDynamic");
+      if (!d) return;
+    
+      // fill only fast-changing stuff
+      let html = "";
+    
+      // for retransmitter UAVs we care about battery, state and on/off
+      if (u.unit_class === "RetransmiterUAV") {
+        html += `<p>Battery: ${u.currentBattery ?? "?"}%</p>`;
+        html += `<p>State: ${u.state ?? "?"}</p>`;
+        html += `<p>Retransmitting: ${u.is_retransmitting ? "yes" : "no"}</p>`;
+      }
+    
+      d.innerHTML = html;
+    }
 
     function drawUnits() {
         if (mapLoaded) {
@@ -765,6 +804,16 @@ PAGE_TMPL = """
           ctx.beginPath();
           ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
         }
+        
+        if (u.unit_class === "AntiAir" && typeof u.ammo !== "undefined") {
+          ctx.save();
+          ctx.fillStyle = "red";
+          ctx.font = "14px sans-serif";
+          ctx.textAlign = "center";
+          // a little above the unit icon
+          ctx.fillText(u.ammo.toString(), u.x, u.y - half - 4);
+          ctx.restore();
+        }
 
         if (u.id === selectedUnitId) {
           ctx.beginPath();
@@ -795,7 +844,7 @@ PAGE_TMPL = """
 
     // initialization
     fetchUnits();
-    setInterval(fetchUnits, 100)
+    setInterval(fetchUnits, 1000)
     window.requestAnimationFrame(gameLoop);
   </script>
 </body>
