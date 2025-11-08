@@ -1192,7 +1192,8 @@ def spawn_retrans_uav():
         currentWeight=1.7,
         idleBatteryDrainPerTick=0.0083,
         moveBatteryDrainPerTick=0.0138,
-        transmissionRange=200.0   # pick your radius
+        transmissionRange=200.0,
+        usedFrequencies=[5600]
     )
 
     # remember parent base if you want later reclamation
@@ -1334,7 +1335,8 @@ def admin_spawn():
             currentWeight=1.7,
             idleBatteryDrainPerTick=0.0083,
             moveBatteryDrainPerTick=0.0138,
-            transmissionRange=200.0
+            transmissionRange=200.0,
+            usedFrequencies=[5600]
         )
         units.append(ruav)
         return jsonify({"status": "ok", "spawned": "RetransmiterUAV", "id": ruav.id})

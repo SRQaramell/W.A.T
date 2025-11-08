@@ -153,11 +153,12 @@ class RetransmiterUAV(UAV):
                  currentWeight: float,
                  idleBatteryDrainPerTick: float,
                  moveBatteryDrainPerTick: float,
-                 transmissionRange: float):
+                 transmissionRange: float,
+                 usedFrequencies: list = None):
         # call normal UAV init
         super().__init__(name, chanceToHit, baseSpeed, state, position, image,
                          armourType, player, currentWeight,
-                         idleBatteryDrainPerTick, moveBatteryDrainPerTick)
+                         idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies)
         self.transmissionRange = transmissionRange
         # NEW: start turned off
         self.is_retransmitting = False
