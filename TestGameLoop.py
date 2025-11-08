@@ -6,7 +6,6 @@ from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
 from PIL import Image, ImageDraw
 import UAVUnits, AntiAirUnits, LogHub
-from UAVUnits import UnitState
 
 app = Flask(__name__)
 
@@ -150,6 +149,10 @@ PAGE_TMPL = """
       if (u.unit_class === "LogHub") {
         snap.available_retransmitters = u.available_retransmitters;
       }
+      if (u.unit_class === "UAV" || u.unit_class === "LoiteringMunition") {
+        snap.currentBattery = u.currentBattery;
+        snap.state = u.state;
+      }
       return snap;
     }
 
@@ -165,6 +168,11 @@ PAGE_TMPL = """
       if (a.unit_class === "LogHub") {
         same = same && a.available_retransmitters === b.available_retransmitters;
       }
+        if (a.unit_class === "UAV" || a.unit_class === "LoiteringMunition") {
+          same = same &&
+            a.currentBattery === b.currentBattery &&
+            a.state === b.state;
+        }
       return same;
     }
 

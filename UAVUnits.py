@@ -99,6 +99,7 @@ class UAV(Unit):
         super().tick_unit(dt)
         self.currentBattery -= self.getCurrentBatteryDrainPerTick()
         if self.currentBattery <= 0.0:
+            self.currentBattery = 0.0
             self.state = UnitState.Destroyed
             return
 
