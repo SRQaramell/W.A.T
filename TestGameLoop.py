@@ -134,6 +134,12 @@ PAGE_TMPL = """
           Click map to place
         </label>
       </div>
+        <div>
+          <label>
+            <input type="checkbox" id="adminDestroyMode">
+            Click unit/structure to DESTROY
+          </label>
+        </div>
       <p id="adminMsg" style="font-size:11px;color:#333;"></p>
     </div>
 
@@ -171,6 +177,22 @@ PAGE_TMPL = """
     const adminPlayer = document.getElementById("adminPlayer");
     const adminPlaceModeChk = document.getElementById("adminPlaceMode");
     const adminMsg = document.getElementById("adminMsg");
+    const adminDestroyModeChk = document.getElementById("adminDestroyMode");
+
+    
+    let adminDestroyMode = false;
+    
+    adminDestroyModeChk.addEventListener("change", () => {
+      adminDestroyMode = adminDestroyModeChk.checked;
+      if (adminDestroyMode) {
+        adminMsg.textContent = "Destroy mode ON: click any unit/structure to remove it.";
+        // optional: turn off place mode, so they don’t clash
+        adminPlaceModeChk.checked = false;
+        adminPlaceMode = false;
+      } else {
+        adminMsg.textContent = "";
+      }
+    });
     
     adminPlaceModeChk.addEventListener("change", () => {
       adminPlaceMode = adminPlaceModeChk.checked;
@@ -324,13 +346,55 @@ PAGE_TMPL = """
     }
 
     canvas.addEventListener("click", (event) => {
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const clickX = (event.clientX - rect.left) * scaleX;
+      const clickY = (event.clientY - rect.top)  * scaleY;
+    
+          // 1) ADMIN DESTROY?
+          if (adminDestroyMode) {
+            // find what we clicked, same as your selection logic later
+            let clickedUnit = null;
+            for (const u of units) {
+              const size = u.size || 24;
+              const half = size / 2;
+              if (clickX >= u.x - half && clickX <= u.x + half &&
+                  clickY >= u.y - half && clickY <= u.y + half) {
+                clickedUnit = u;
+                break;
+              }
+            }
+        
+            if (clickedUnit) {
+              fetch("/admin_destroy", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: clickedUnit.id })
+              })
+              .then(res => res.json())
+              .then(d => {
+                if (d.status === "ok") {
+                  adminMsg.textContent = "Destroyed " + d.destroyed_class + " (id=" + d.id + ")";
+                  fetchUnits();
+                } else {
+                  adminMsg.textContent = d.message || "Error destroying";
+                }
+              })
+              .catch(err => {
+                console.error(err);
+                adminMsg.textContent = "Error destroying";
+              });
+            } else {
+              adminMsg.textContent = "No unit/structure under click.";
+            }
+        
+            return; // stop normal click handling
+          }
+
     // ADMIN PLACE?
         if (adminPlaceMode) {
-          const rect = canvas.getBoundingClientRect();
-          const scaleX = canvas.width / rect.width;
-          const scaleY = canvas.height / rect.height;
-          const clickX = (event.clientX - rect.left) * scaleX;
-          const clickY = (event.clientY - rect.top)  * scaleY;
           
             const payload = {
               unit_type: adminUnitType.value,
@@ -370,14 +434,6 @@ PAGE_TMPL = """
           // don't let the normal click logic run
           return;
         }
-
-    
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-
-      const clickX = (event.clientX - rect.left) * scaleX;
-      const clickY = (event.clientY - rect.top)  * scaleY;
 
       // 0. placing retransmitter?
       if (placeRetransmitterMode && placingBaseId !== null) {
@@ -1150,6 +1206,50 @@ def place_retransmitter():
     base.available_retransmitters -= 1
 
     return jsonify({"status": "ok", "available": base.available_retransmitters})
+
+@app.route("/admin_destroy", methods=["POST"])
+def admin_destroy():
+    data = request.get_json()
+    target_id = data.get("id", None)
+
+    if target_id is None:
+        return jsonify({"status": "error", "message": "no id provided"}), 400
+
+    global units, aaUnits, logBases, ground_retransmitters, ewarUnits
+
+    # we will try to find it in every list
+    lists = [
+        ("UAV/air unit", units),
+        ("AntiAir", aaUnits),
+        ("LogHub", logBases),
+        ("GroundRetransmitter", ground_retransmitters),
+        ("ElectronicWarfare", ewarUnits),
+    ]
+
+    for (label, lst) in lists:
+        for obj in list(lst):  # copy to allow removal
+            if getattr(obj, "id", None) == target_id:
+                # if it has a 'state' (UAVs, AA) -> mark destroyed
+                if hasattr(obj, "state"):
+                    obj.state = UAVUnits.UnitState.Destroyed
+                    # the game loop already cleans destroyed UAVs/AA,
+                    # but we can also filter here if you want immediate effect
+                    if lst is units:
+                        units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
+                    if lst is aaUnits:
+                        aaUnits = [a for a in aaUnits if a.state != UAVUnits.UnitState.Destroyed]
+                else:
+                    # structures: just remove from list
+                    lst.remove(obj)
+
+                return jsonify({
+                    "status": "ok",
+                    "id": target_id,
+                    "destroyed_class": label
+                })
+
+    return jsonify({"status": "error", "message": "object not found"}), 404
+
 
 @app.route("/spawn_uav", methods=["POST"])
 def spawn_uav():
