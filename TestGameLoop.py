@@ -1,5 +1,6 @@
 import threading
 import time
+import math
 
 from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
@@ -13,6 +14,7 @@ MAP_WIDTH = 800
 MAP_HEIGHT = 500
 TICK_RATE = 10
 PLAYER1 = 1
+ATTACK_RANGE = 3
 
 # --- HTML PAGE ---
 PAGE_TMPL = """
@@ -97,46 +99,78 @@ PAGE_TMPL = """
         .catch(err => console.error("Failed to fetch units:", err));
     }
 
-    canvas.addEventListener("click", (event) => {
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
+        canvas.addEventListener("click", (event) => {
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width / rect.width;
+          const scaleY = canvas.height / rect.height;
+        
+          const clickX = (event.clientX - rect.left) * scaleX;
+          const clickY = (event.clientY - rect.top)  * scaleY;
+        
+          // 1. did we click on a unit?
+          let clickedUnit = null;
+          for (const u of units) {
+            const size = u.size || 24;
+            const half = size / 2;
+            if (clickX >= u.x - half && clickX <= u.x + half &&
+                clickY >= u.y - half && clickY <= u.y + half) {
+              clickedUnit = u;
+              break;
+            }
+          }
+        
+          // we have a selected unit already?
+          const selected = selectedUnitId !== null
+              ? units.find(u => u.id === selectedUnitId)
+              : null;
+        
+          // 2. Ctrl+click on enemy unit -> attack (only if selected is LoiteringMunition)
+          if (clickedUnit && event.ctrlKey && selected &&
+              selected.unit_class === "LoiteringMunition" &&
+              clickedUnit.player !== selected.player) {
+        
+            fetch("/attack_unit", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                attacker_id: selected.id,
+                target_id: clickedUnit.id
+              })
+            })
+            .then(res => res.json())
+            .then(d => {
+              // refresh after attack
+              fetchUnits();
+            })
+            .catch(err => console.error(err));
+        
+            return; // stop here – attack handled
+          }
+        
+          // 3. if we clicked a unit (no ctrl or not enemy / not LM) -> just select it
+          if (clickedUnit) {
+            selectedUnitId = clickedUnit.id;
+            moveTarget = null;
+            updateInfoPanel(clickedUnit);
+            return;
+          }
+        
+          // 4. click on empty ground -> move (only if something selected)
+          if (selectedUnitId !== null) {
+            fetch("/move_unit", {
+              method: "POST",
+              headers:  { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
+            })
+            .then(res => res.json())
+            .then(data => {
+              fetchUnits();
+            })
+            .catch(err => console.error(err));
+            moveTarget = { x: clickX, y: clickY };
+          }
+        });
 
-      const clickX = (event.clientX - rect.left) * scaleX;
-      const clickY = (event.clientY - rect.top)  * scaleY;
-
-      console.log("Click at:", clickX, clickY, " (scaled) ", "Canvas rect:", rect, "scales:", scaleX, scaleY);
-
-      // check if clicked on a unit → select it
-      for (const u of units) {
-        const size = u.size || 24;
-        const half = size / 2;
-        if (clickX >= u.x - half && clickX <= u.x + half &&
-            clickY >= u.y - half && clickY <= u.y + half) {
-          selectedUnitId = u.id;
-          moveTarget = null;
-          updateInfoPanel(u);
-          return;
-        }
-      }
-
-      // if click on empty space and a unit is selected → set target using that unit’s speed property
-      if (selectedUnitId !== null) {
-        fetch("/move_unit", {
-            method: "POST",
-            headers:  { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
-        })
-        .then(res => res.json())
-        .then(data => {
-            fetchUnits();
-        })
-        .catch(err => console.error(err));
-        moveTarget = { x: clickX, y: clickY };
-      }
-      
-      
-    });
 
     function updateInfoPanel(u) {
       let html = "<ul>";
@@ -239,6 +273,8 @@ selected_unit_id = None  # server-side info about selection
 units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/images/uav.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
 
 aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/images/antiAir.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
+
+pending_attacks = {}
 
 @app.route("/")
 def index():
@@ -346,6 +382,36 @@ def move_unit():
 
     return jsonify({"status": "error", "message": "unit not found"}), 404
 
+@app.route("/attack_unit", methods=["POST"])
+def attack_unit():
+    data = request.get_json()
+    attacker_id = data.get("attacker_id")
+    target_id = data.get("target_id")
+
+    # we won’t attack right now – we just store the intent
+    global pending_attacks
+
+    # optional: validate attacker exists and is LM
+    attacker = next((u for u in units if u.id == attacker_id), None)
+    if attacker is None:
+        return jsonify({"status": "error", "message": "attacker not found"}), 404
+
+    if not isinstance(attacker, UAVUnits.LoiteringMunition):
+        return jsonify({"status": "error", "message": "attacker is not LoiteringMunition"}), 400
+
+    # also check that target exists (in any list)
+    all_units = units + aaUnits
+    target = next((u for u in all_units if u.id == target_id), None)
+    if target is None:
+        return jsonify({"status": "error", "message": "target not found"}), 404
+
+    # store order
+    pending_attacks[attacker_id] = target_id
+
+    return jsonify({"status": "ok", "message": "attack order stored"})
+
+
+
 def game_loop():
     dt = 1.0/TICK_RATE
     global units, aaUnits
@@ -359,6 +425,35 @@ def game_loop():
 
         before_uav = len(units)
         before_aa = len(aaUnits)
+
+        for attacker_id in list(pending_attacks.keys()):
+            target_id = pending_attacks[attacker_id]
+
+            # find attacker + target again (they may have moved or died)
+            attacker = next((u for u in units if u.id == attacker_id), None)
+            all_units = units + aaUnits
+            target = next((u for u in all_units if u.id == target_id), None)
+
+            # if attacker or target is gone/destroyed -> drop order
+            if attacker is None or attacker.state == UAVUnits.UnitState.Destroyed \
+               or target is None or target.state == UAVUnits.UnitState.Destroyed:
+                pending_attacks.pop(attacker_id, None)
+                continue
+
+            # compute distance
+            dx = target.positionX - attacker.positionX
+            dy = target.positionY - attacker.positionY
+            dist = math.hypot(dx, dy)
+
+            if dist <= ATTACK_RANGE:
+                # in range -> perform attack
+                attacker.attack(target)
+                # remove order (LM will likely destroy itself too)
+                pending_attacks.pop(attacker_id, None)
+            else:
+                # not in range -> keep chasing
+                # we order the LM to move toward the *current* target position
+                attacker.move_unit((target.positionX, target.positionY))
 
         units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
         aaUnits = [aa for aa in aaUnits if aa.state != UAVUnits.UnitState.Destroyed]
