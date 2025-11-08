@@ -119,6 +119,9 @@ PAGE_TMPL = """
     let spawnUavBaseId = null;
     let spawnUavBaseData = null;
 
+    let placeRtFromKeyboard = false;
+    let spawnUavFromKeyboard = false;
+
     let units = [];             // will be fetched from server
     let selectedUnitId = null;
     let selectedUnitSnapshot = null;
@@ -128,6 +131,11 @@ PAGE_TMPL = """
       placeRetransmitterMode = true;
       placingBaseId = baseId;
       placingBaseData = baseData;
+    }
+
+    function getSelectedUnit() {
+      if (selectedUnitId === null) return null;
+      return units.find(u => u.id === selectedUnitId) || null;
     }
 
     function startUavSpawn(baseId, baseData) {
@@ -356,6 +364,82 @@ PAGE_TMPL = """
         })
         .catch(err => console.error(err));
         moveTarget = { x: clickX, y: clickY };
+      }
+    });
+    
+    document.addEventListener("keydown", (e) => {
+      // avoid repeating when key is held down and browser fires repeat events
+      if (e.repeat) return;
+    
+      const selected = getSelectedUnit();
+      // we only want to start these modes if a LogHub (base) is selected
+      const isBaseSelected = selected && selected.unit_class === "LogHub";
+    
+      // R -> place retransmitter
+      if (e.key === "r" || e.key === "R") {
+        if (isBaseSelected) {
+          // check if base still has retransmitters
+          const avail = selected.available_retransmitters ?? 0;
+          if (avail > 0) {
+            startRetransmitterPlacing(selected.id, selected);
+            placeRtFromKeyboard = true;
+            // optional: show hint in panel
+            const hint = document.getElementById("placeHint");
+            if (hint) {
+              hint.textContent = "Click on the map inside the base range to place retransmitter…";
+            } else {
+              // you can also append to infoPanel if you want
+            }
+          } else {
+            // optional: alert("No retransmitters left");
+          }
+        }
+      }
+    
+      // L -> spawn loitering munition
+      if (e.key === "l" || e.key === "L") {
+        if (isBaseSelected) {
+          const curr = selected.current_spawned_uavs ?? 0;
+          const max = selected.max_spawned_uavs ?? 5;
+          if (curr < max) {
+            startUavSpawn(selected.id, selected);
+            spawnUavFromKeyboard = true;
+            // optional UI hint
+            const existingMsg = document.getElementById("spawnUavMsg");
+            if (!existingMsg) {
+              const panel = document.getElementById("unitInfo");
+              if (panel) {
+                panel.innerHTML += `<p id="spawnUavMsg">Click on the map to set UAV target…</p>`;
+              }
+            }
+          } else {
+            // optional: alert("No UAVs left");
+          }
+        }
+      }
+    });
+    
+    document.addEventListener("keyup", (e) => {
+      // if user releases R and we were in RT mode because of keyboard, exit
+      if ((e.key === "r" || e.key === "R") && placeRtFromKeyboard) {
+        placeRetransmitterMode = false;
+        placingBaseId = null;
+        placingBaseData = null;
+        placeRtFromKeyboard = false;
+        const chk = document.getElementById("placeRtChk");
+        const hint = document.getElementById("placeHint");
+        if (chk) chk.checked = false;
+        if (hint) hint.textContent = "";
+      }
+    
+      // if user releases L and we were in spawn mode because of keyboard, exit
+      if ((e.key === "l" || e.key === "L") && spawnUavFromKeyboard) {
+        spawnUavMode = false;
+        spawnUavBaseId = null;
+        spawnUavBaseData = null;
+        spawnUavFromKeyboard = false;
+        const msg = document.getElementById("spawnUavMsg");
+        if (msg) msg.textContent = "";
       }
     });
 
