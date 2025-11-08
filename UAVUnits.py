@@ -52,10 +52,13 @@ class Unit:
         self.armourType = armourType
         self.player = player
         self.viewRange = viewRange
+        self.move_queue: list[tuple[float, float]] = []
 
-    def move_unit(self, destination):
+    def move_unit(self, destination, clear_queue: bool = True):
         self.state = UnitState.Moving
         self.destination = destination
+        if clear_queue:
+            self.move_queue.clear()
 
     def tick_unit(self, dt: float):
         if self.state != UnitState.Moving:
@@ -71,18 +74,26 @@ class Unit:
 
         if dist == 0:
             self.state = UnitState.Idle
+            self._try_dequeue_next_move()
             return
-        effectiveSpeed = self.baseSpeed #* getModifiersAtPos(destinationX, destinationY)
 
+        effectiveSpeed = self.baseSpeed #* getModifiersAtPos(destinationX, destinationY)
         maxStep = effectiveSpeed * dt
 
         if maxStep >= dist:
             self.positionX = targetX
             self.positionY = targetY
             self.state = UnitState.Idle
+            self._try_dequeue_next_move()
         else:
             self.positionX += (destinationX/dist) * maxStep
             self.positionY += (destinationY/dist) * maxStep
+
+    def _try_dequeue_next_move(self):
+        if self.move_queue:
+            next_dest = self.move_queue.pop(0)
+            # reuse existing move_unit so state etc. is set correctly
+            self.move_unit(next_dest, clear_queue=False)
 
     def __str__(self):
         return f"{self.nazwa})"

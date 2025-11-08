@@ -589,20 +589,31 @@ PAGE_TMPL = """
         return;
       }
 
-      // 4. move
-      if (selectedUnitId !== null) {
-        fetch("/move_unit", {
-          method: "POST",
-          headers:  { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
-        })
-        .then(res => res.json())
-        .then(data => {
-          fetchUnits();
-        })
-        .catch(err => console.error(err));
-        moveTarget = { x: clickX, y: clickY };
-      }
+        // 4. move (with queue when Shift is held)
+        if (selectedUnitId !== null) {
+          const isQueued = event.shiftKey === true;
+        
+          fetch("/move_unit", {
+            method: "POST",
+            headers:  { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: selectedUnitId,
+              x: clickX,
+              y: clickY,
+              queue: isQueued   // <--- tell server this should be added to queue
+            })
+          })
+          .then(res => res.json())
+          .then(data => {
+            // refresh units so we see destination line etc.
+            fetchUnits();
+          })
+          .catch(err => console.error(err));
+        
+          // optional: show last clicked point as target
+          moveTarget = { x: clickX, y: clickY };
+        }
+
     });
     
     document.addEventListener("keydown", (e) => {
@@ -858,6 +869,38 @@ PAGE_TMPL = """
             ctx.restore();
           }
         }
+        
+                // draw future queued waypoints, if any
+        if (Array.isArray(u.move_queue) && u.move_queue.length > 0) {
+          ctx.save();
+          ctx.beginPath();
+        
+          // start from the end of the currently drawn segment,
+          // or from unit position if there's no current destination
+          let lastX = u.x;
+          let lastY = u.y;
+        
+          if (u.destination && Array.isArray(u.destination) && u.destination.length === 2) {
+            lastX = u.destination[0];
+            lastY = u.destination[1];
+          }
+        
+          ctx.moveTo(lastX, lastY);
+        
+          for (const pt of u.move_queue) {
+            // pt is [x, y]
+            ctx.lineTo(pt[0], pt[1]);
+            // optionally draw a small marker at each queued point
+            // ctx.moveTo(pt[0], pt[1]);
+          }
+        
+          // make it a bit lighter than the current segment so you can tell the difference
+          ctx.strokeStyle = "rgba(0, 160, 255, 0.35)";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([3, 3]);
+          ctx.stroke();
+          ctx.restore();
+        }
 
         // 1) draw range for enemy AntiAir (NEW condition)
         if (
@@ -980,11 +1023,14 @@ selected_unit_id = None  # server-side info about selection
 
 SIM_PAUSED = False
 
-units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT,[2400])]
+#units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT,[2400])]
+units = []
 
-aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/ICONS/AIR DEF ENEMY.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
+#aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/ICONS/AIR DEF ENEMY.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
+aaUnits = []
 
-logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/ICONS/HQ_ALLY.png",1, 300)]
+#logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/ICONS/HQ_ALLY.png",1, 300)]
+logBases = []
 
 ground_retransmitters = []
 
@@ -1054,6 +1100,10 @@ def get_units():
             if getattr(u, "destination", None) is not None:
                 # convert tuple -> list for JSON
                 data["destination"] = [u.destination[0], u.destination[1]]
+            if hasattr(u, "move_queue") and u.move_queue:
+                data["move_queue"] = [[pt[0], pt[1]] for pt in u.move_queue]
+            else:
+                data["move_queue"] = []
 
         if isinstance(u, UAVUnits.RetransmiterUAV):
             data.update({
@@ -1125,8 +1175,8 @@ def move_unit():
     unit_id = data.get("id")
     x = data.get("x")
     y = data.get("y")
+    queue = bool(data.get("queue", False))
 
-    # find the unit by ID
     for u in units:
         if u.id == unit_id and u.player == PLAYER1:
 
@@ -1134,11 +1184,30 @@ def move_unit():
                 if not is_uav_in_comm(u, logBases, ground_retransmitters):
                     return jsonify({"status": "error", "message": "UAV out of transmission range"}), 400
 
+            if queue:
+                # make sure queue exists
+                if not hasattr(u, "move_queue"):
+                    u.move_queue = []
+
+                # if unit is not moving right now, treat this as the first move
+                if u.state != UAVUnits.UnitState.Moving or u.destination is None:
+                    u.move_unit((x, y), clear_queue=False)
+                    print(f"[SERVER] (queued-first) moving unit {unit_id} to ({x}, {y})")
+                    return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y), "queued": True})
+                else:
+                    # already moving -> append
+                    u.move_queue.append((x, y))
+                    print(f"[SERVER] Queued move for unit {unit_id} to ({x}, {y})")
+                    return jsonify({"status": "ok", "unit_id": unit_id, "queued_destination": (x, y), "queued": True})
+
+            # normal click (no queue): overwrite
             u.move_unit((x, y))
             print(f"[SERVER] Moving unit {unit_id} to ({x}, {y})")
             return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y)})
 
     return jsonify({"status": "error", "message": "unit not found"}), 404
+
+
 
 @app.route("/attack_unit", methods=["POST"])
 def attack_unit():
