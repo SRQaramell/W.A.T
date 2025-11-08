@@ -26,13 +26,26 @@ PAGE_TMPL = """
       margin: 0;
       display: flex;
       height: 100vh;
+      /* we can keep overflow hidden here because the scroll will be on #mapContainer */
       overflow: hidden;
     }
-    #canvas {
+    
+    /* NEW: scrollable map area */
+    #mapContainer {
       flex: 1 1 auto;
+      overflow: auto;             /* enables scrollbars */
       background: #f0f0f0;
+      display: flex;
+      justify-content: flex-end;  /* anchors the canvas to the right edge */
+      align-items: flex-start;
+    }
+    
+    /* canvas can stay block */
+    #canvas {
       display: block;
     }
+    
+    /* info panel stays the same */
     #infoPanel {
       width: 300px;
       padding: 10px;
@@ -41,6 +54,7 @@ PAGE_TMPL = """
       overflow-y: auto;
       font-family: sans-serif;
     }
+
     #infoPanel h2 {
       margin-top: 0;
     }
@@ -112,7 +126,9 @@ PAGE_TMPL = """
     </div>
 
 
-  <canvas id="canvas" width="1024" height="1024"></canvas>
+    <div id="mapContainer">
+      <canvas id="canvas" width="1024" height="1024"></canvas>
+    </div>
   <div id="infoPanel">
     <h2>Selected Unit Info</h2>
     <div id="unitInfo">No unit selected.</div>
