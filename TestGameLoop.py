@@ -12,6 +12,7 @@ app = Flask(__name__)
 MAP_WIDTH = 800
 MAP_HEIGHT = 500
 TICK_RATE = 10
+PLAYER1 = 1
 
 # --- HTML PAGE ---
 PAGE_TMPL = """
@@ -148,40 +149,70 @@ PAGE_TMPL = """
       infoPanel.innerHTML = html;
     }
 
-    function drawUnits() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      for (const u of units) {
-        const img = u._img;
-        const size = u.size || 24;
-        const half = size / 2;
-
-        if (img && img.complete) {
-          ctx.drawImage(img, u.x - half, u.y - half, size, size);
-        } else {
-          ctx.beginPath();
-          ctx.arc(u.x, u.y, half, 0, Math.PI*2);
-          ctx.fillStyle = "gray";
-          ctx.fill();
+        function drawUnits() {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+          for (const u of units) {
+            const size = u.size || 24;
+            const half = size / 2;
+        
+            // If this is AntiAir, draw its range first (so circle is under the icon)
+            if (u.unit_class === "AntiAir" && u.range) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, u.range, 0, Math.PI * 2);
+              ctx.strokeStyle = "rgba(0, 128, 255, 0.6)";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+        
+              // optional fill to visualize area
+              ctx.fillStyle = "rgba(0, 128, 255, 0.08)";
+              ctx.fill();
+            }
+        
+            const img = u._img;
+            if (img && img.complete) {
+              // Draw base image
+              ctx.drawImage(img, u.x - half, u.y - half, size, size);
+            
+              // Overlay color tint based on player
+              ctx.save();
+              ctx.globalAlpha = 0.35;
+              if (u.player === 1) ctx.fillStyle = "blue";
+              else if (u.player === 2) ctx.fillStyle = "red";
+              else ctx.fillStyle = "gray";
+              ctx.beginPath();
+              ctx.rect(u.x - half, u.y - half, size, size);
+              ctx.fill();
+              ctx.restore();
+            } else {
+              // Fallback: colored circle if no image
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, half, 0, Math.PI * 2);
+              if (u.player === 1) ctx.fillStyle = "blue";
+              else if (u.player === 2) ctx.fillStyle = "red";
+              else ctx.fillStyle = "gray";
+              ctx.fill();
+            }
+        
+            // selection ring
+            if (u.id === selectedUnitId) {
+              ctx.beginPath();
+              ctx.arc(u.x, u.y, half + 4, 0, Math.PI * 2);
+              ctx.strokeStyle = "red";
+              ctx.lineWidth = 2;
+              ctx.stroke();
+            }
+          }
+        
+          if (moveTarget) {
+            ctx.beginPath();
+            ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
+            ctx.strokeStyle = "blue";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
         }
 
-        if (u.id === selectedUnitId) {
-          ctx.beginPath();
-          ctx.arc(u.x, u.y, half + 4, 0, Math.PI*2);
-          ctx.strokeStyle = "red";
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-
-      if (moveTarget) {
-        ctx.beginPath();
-        ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI*2);
-        ctx.strokeStyle = "blue";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-    }
 
     let lastTimestamp = null;
     function gameLoop(timestamp) {
@@ -238,7 +269,11 @@ def map_image():
 @app.route("/units")
 def get_units():
     unit_data = []
-    for u in units:
+
+    # include both UAVs and AA
+    all_units = units + aaUnits
+
+    for u in all_units:
         data = {
             "id": u.id,
             "name": u.name,
@@ -251,6 +286,7 @@ def get_units():
             "chanceToHit": getattr(u, "chanceToHit", None),
             "baseSpeed": getattr(u, "baseSpeed", None),
             "armourType": u.armourType.name if hasattr(u, "armourType") else None,
+            "size": 28  # small convenience so we can draw a square/circle
         }
 
         # extra fields for all UAVs
@@ -269,9 +305,18 @@ def get_units():
                 "explosiveType": u.explosiveType.name,
             })
 
+        # extra fields for AntiAir
+        if isinstance(u, AntiAirUnits.AntiAir):
+            data.update({
+                "range": u.range,
+                "aa_state": u.AAstate.name,
+                "ammo": u.ammoCount
+            })
+
         unit_data.append(data)
 
     return jsonify(unit_data)
+
 
 # --- API: select unit ---
 @app.route("/select_unit", methods=["POST"])
@@ -294,7 +339,7 @@ def move_unit():
 
     # find the unit by ID
     for u in units:
-        if u.id == unit_id:
+        if u.id == unit_id and u.player == PLAYER1:
             u.move_unit((x, y))
             print(f"[SERVER] Moving unit {unit_id} to ({x}, {y})")
             return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y)})
@@ -303,10 +348,25 @@ def move_unit():
 
 def game_loop():
     dt = 1.0/TICK_RATE
+    global units, aaUnits
     while True:
         for u in units:
             u.tick_unit(dt)
+
+        for aa in aaUnits:
+            aa.tickAA(dt, units)
         time.sleep(dt)
+
+        before_uav = len(units)
+        before_aa = len(aaUnits)
+
+        units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
+        aaUnits = [aa for aa in aaUnits if aa.state != UAVUnits.UnitState.Destroyed]
+
+        if len(units) != before_uav or len(aaUnits) != before_aa:
+            print(f"[SERVER] Destroyed units removed: "
+                  f"{before_uav - len(units)} UAVs, {before_aa - len(aaUnits)} AA units.")
+
 
 threading.Thread(target=game_loop, daemon=True).start()
 

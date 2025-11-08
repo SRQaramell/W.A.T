@@ -23,6 +23,9 @@ class AntiAir(Unit):
         self.AAstate = AAstate
 
     def tickAA(self, dt: float, units):
+        if self.ammoCount <= 0:
+            self.AAstate = AAStatus.OutOfAmmo
+            return
         if self.AAstate == AAStatus.Idle:
             targets = self.scanForTarget(units)
             if len(targets) > 0:
@@ -57,6 +60,8 @@ class AntiAir(Unit):
         inRange = []
         for u in targetList:
             if u is self:
+                continue
+            if u.player == self.player:
                 continue
 
             dx = u.positionX - self.positionX

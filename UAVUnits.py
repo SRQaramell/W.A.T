@@ -38,6 +38,7 @@ class Unit:
     positionY = 0
     destination = None
 
+
     def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int):
         self.name = name
         self.chanceToHit = chanceToHit
