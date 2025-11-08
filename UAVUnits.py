@@ -89,12 +89,12 @@ class Unit:
 class UAV(Unit):
     currentBattery = 100.0
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float, usedFrequencies: [float]):
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float, usedFrequencies: list = None):
         super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player)
         self.currentWeight = currentWeight
         self.idleBatteryDrainPerTick = idleBatteryDrainPerTick
         self.moveBatteryDrainPerTick = moveBatteryDrainPerTick
-        self.usedFrequencies = usedFrequencies
+        self.usedFrequencies = list(usedFrequencies) if usedFrequencies else []
 
     def tick_unit(self, dt: float):
         super().tick_unit(dt)
@@ -119,8 +119,8 @@ class UAV(Unit):
 
 class LoiteringMunition(UAV):
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float ,payload: float, explosiveType: ExplosiveType):
-        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, currentWeight, idleBatteryDrainPerTick, moveBatteryDrainPerTick)
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float ,payload: float, explosiveType: ExplosiveType, usedFrequencies: list = None):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, currentWeight, idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies)
         self.payload = payload
         self.explosiveType = explosiveType
 

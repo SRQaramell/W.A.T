@@ -105,9 +105,20 @@ PAGE_TMPL = """
             <option value="LogHub">LogHub</option>
             <option value="GroundRetransmitter">GroundRetransmitter</option>
             <option value="RetransmiterUAV">RetransmiterUAV</option>
+            <option value="ElectronicWarfare">ElectronicWarfare</option>
           </select>
         </label>
       </div>
+        <div style="margin-top:6px;">
+          <label>Jamming range (px):
+            <input id="adminJammingRange" type="number" value="200" style="width:80px;">
+          </label>
+        </div>
+        <div style="margin-top:4px;">
+          <label>Jamming freqs (comma): 
+            <input id="adminJammingFreq" type="text" value="2400,5800" style="width:120px;">
+          </label>
+        </div>
       <div>
         <label>Player:
           <select id="adminPlayer">
@@ -318,17 +329,27 @@ PAGE_TMPL = """
           const scaleY = canvas.height / rect.height;
           const clickX = (event.clientX - rect.left) * scaleX;
           const clickY = (event.clientY - rect.top)  * scaleY;
-        
-          fetch("/admin_spawn", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+          
+            const payload = {
               unit_type: adminUnitType.value,
               player: adminPlayer.value,
               x: clickX,
               y: clickY
+            };
+            
+            if (adminUnitType.value === "ElectronicWarfare") {
+              const jamRange = parseInt(document.getElementById("adminJammingRange").value, 10) || 200;
+              const jamFreqText = document.getElementById("adminJammingFreq").value || "";
+              const jamFreqs = jamFreqText.split(",").map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+              payload.jammingRange = jamRange;
+              payload.jammingFreq = jamFreqs;
+            }
+            
+            fetch("/admin_spawn", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)   // <-- send payload, not a new object
             })
-          })
           .then(res => res.json())
           .then(d => {
             if (d.status === "ok") {
@@ -686,6 +707,11 @@ PAGE_TMPL = """
             });
           }
         
+        if (u.unit_class === "ElectronicWarfare") {
+          html += `<p><strong>Jamming range:</strong> ${u.jammingRange}</p>`;
+          html += `<p><strong>Jamming freqs:</strong> ${Array.isArray(u.jammingFreq) ? u.jammingFreq.join(", ") : u.jammingFreq}</p>`;
+        }
+        
         if (u.unit_class === "RetransmiterUAV") {
           const btn = document.getElementById("toggleRtUavBtn");
           if (btn) {
@@ -814,6 +840,16 @@ PAGE_TMPL = """
           ctx.fillText(u.ammo.toString(), u.x, u.y - half - 4);
           ctx.restore();
         }
+        
+        if (u.unit_class === "ElectronicWarfare" && showTransmission) {
+          ctx.beginPath();
+          ctx.arc(u.x, u.y, u.jammingRange, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(200,0,0,0.6)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "rgba(200,0,0,0.05)";
+          ctx.fill();
+        }
 
         if (u.id === selectedUnitId) {
           ctx.beginPath();
@@ -844,7 +880,7 @@ PAGE_TMPL = """
 
     // initialization
     fetchUnits();
-    setInterval(fetchUnits, 1000)
+    setInterval(fetchUnits, 200)
     window.requestAnimationFrame(gameLoop);
   </script>
 </body>
@@ -853,13 +889,15 @@ PAGE_TMPL = """
 
 selected_unit_id = None  # server-side info about selection
 
-units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT)]
+units = [UAVUnits.LoiteringMunition("Termopile", 50, 55, UAVUnits.UnitState.Landed, (100,100), "static/ICONS/UAV ALLY.png", UAVUnits.ArmourType.Unarmored, 1,1.7,0.0083, 0.0138,1.0,UAVUnits.ExplosiveType.HEAT,[2400])]
 
 aaUnits = [AntiAirUnits.AntiAir("Wuefkin",20,0, UAVUnits.UnitState.Idle, (400,400), "static/ICONS/AIR DEF ENEMY.png", UAVUnits.ArmourType.LightArmour, 2, 150, 3, 1, 2, AntiAirUnits.AAStatus.Idle)]
 
 logBases = [LogHub.LogHub("14 Baza Logistyczna", (150,150), "static/ICONS/HQ_ALLY.png",1, 300)]
 
 ground_retransmitters = []
+
+ewarUnits = []
 
 pending_attacks = {}
 
@@ -894,7 +932,7 @@ def get_units():
     unit_data = []
 
     # include UAVs, AA and bases
-    all_units = units + aaUnits + logBases + ground_retransmitters
+    all_units = units + aaUnits + logBases + ground_retransmitters + ewarUnits
 
     for u in all_units:
         # base dictionary common for everything
@@ -962,6 +1000,12 @@ def get_units():
             data.update({
                 "transmissionRange": u.transmissionRange,
                 "parent_base_id": u.parent_base_id
+            })
+
+        if isinstance(u, LogHub.ElectronicWarfare):
+            data.update({
+                "jammingRange": u.jammingRange,
+                "jammingFreq": getattr(u, "jammingFreq", [])
             })
 
         unit_data.append(data)
@@ -1100,7 +1144,8 @@ def spawn_uav():
         idleBatteryDrainPerTick=0.0083,
         moveBatteryDrainPerTick=0.0138,
         payload=1.0,
-        explosiveType=UAVUnits.ExplosiveType.HEAT
+        explosiveType=UAVUnits.ExplosiveType.HEAT,
+        usedFrequencies=[2400]
     )
 
     # remember which base spawned it, so we can give the slot back when it dies
@@ -1294,13 +1339,65 @@ def admin_spawn():
         units.append(ruav)
         return jsonify({"status": "ok", "spawned": "RetransmiterUAV", "id": ruav.id})
 
+    elif unit_type == "ElectronicWarfare":
+        if player == 1:
+            img = "static/ICONS/ELECTRONIC WARFARE ALLY.png"
+        else:
+            img = "static/ICONS/ELECTRONIC WARFARE ENEMY.png"
+        # default jammingRange and frequencies — adjust as you like
+        jamming_range = int(data.get("jammingRange", 200))
+        jamming_freq = data.get("jammingFreq", [2400, 5800])
+        if isinstance(jamming_freq, str):
+            # parse comma-separated string just in case
+            jamming_freq = [float(s.strip()) for s in jamming_freq.split(",") if s.strip()]
+
+        ew = LogHub.ElectronicWarfare(
+            name=f"EW-admin-{len(ewarUnits)}",
+            position=(x, y),
+            image=img,
+            player=player,
+            jammingRange=jamming_range,
+            jammingFreq=jamming_freq
+        )
+        ewarUnits.append(ew)
+        return jsonify({"status": "ok", "spawned": "ElectronicWarfare"})
 
     else:
         return jsonify({"status": "error", "message": "unknown unit type"}), 400
 
 
 def is_uav_in_comm(uav, bases, retransmitters):
-    # uav.player must match base.player
+    """
+    Return True if UAV currently has comm (i.e. able to receive commands).
+    Jammers (ewarUnits) can block comm even if friendly bases/retransmitters are in range.
+    By default, ANY jammer (friendly or enemy) will block; to make only enemy jammers block,
+    change `allow_same_player_jammer` to False.
+    """
+    # ---- FIRST: check if any jammer is actively jamming this UAV ----
+    uav_freqs = getattr(uav, "usedFrequencies", []) or []
+    if uav_freqs:
+        for jammer in ewarUnits:
+            # skip inactive jammers if you later add is_active flag:
+            if getattr(jammer, "is_active", True) is False:
+                continue
+
+            dx = uav.positionX - jammer.positionX
+            dy = uav.positionY - jammer.positionY
+            dist = math.hypot(dx, dy)
+            if dist <= jammer.jammingRange:
+                jammer_freqs = getattr(jammer, "jammingFreq", []) or []
+                # simple overlap test (exact membership)
+                for f in uav_freqs:
+                    if f in jammer_freqs:
+                        # Option: only consider enemy jammers. Set to True to allow friendly jammers
+                        allow_same_player_jammer = False
+                        if not allow_same_player_jammer and jammer.player == uav.player:
+                            # ignore same-player jammer
+                            continue
+                        # jammed: no comm available
+                        return False
+
+    # ---- THEN: check normal comm sources (bases, ground retransmitters, airborne retrans) ----
     for b in bases:
         if b.player == uav.player:
             dx = uav.positionX - b.positionX
@@ -1317,8 +1414,7 @@ def is_uav_in_comm(uav, bases, retransmitters):
             if dist <= r.transmissionRange:
                 return True
 
-    # 3. NEW: airborne retransmitters (UAVs)
-    # we use the global `units` list
+    # airborne retransmitters
     for other in units:
         if other is uav:
             continue
@@ -1330,7 +1426,9 @@ def is_uav_in_comm(uav, bases, retransmitters):
             if math.hypot(dx, dy) <= other.transmissionRange:
                 return True
 
+    # nothing provides comm
     return False
+
 
 def game_loop():
     dt = 1.0/TICK_RATE
