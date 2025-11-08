@@ -51,6 +51,10 @@ class Unit:
         self.armourType = armourType
         self.player = player
 
+    def move_unit(self, destination):
+        self.state = UnitState.Moving
+        self.destination = destination
+
     def tick_unit(self, dt: float):
         if self.state != UnitState.Moving:
             return

@@ -241,7 +241,8 @@ def get_units():
             "y": u.positionY,
             "image": u.image,   # path to image (e.g. "static/images/drone.png")
             "state": u.state.name,
-            "player": u.player
+            "player": u.player,
+            "UAV Type": u.__class__.__name__
         })
     return jsonify(unit_data)
 
@@ -256,6 +257,22 @@ def select_unit():
     # e.g. mark unit, open unit detail, change its state, etc.
     print(f"[SERVER] Unit selected: {unit_id}")
     return jsonify({"status": "ok", "selected": unit_id})
+
+@app.route("/move_unit", methods=["POST"])
+def move_unit():
+    data = request.get_json()
+    unit_id = data.get("id")
+    x = data.get("x")
+    y = data.get("y")
+
+    # find the unit by ID
+    for u in units:
+        if u.id == unit_id:
+            u.move_unit((x, y))
+            print(f"[SERVER] Moving unit {unit_id} to ({x}, {y})")
+            return jsonify({"status": "ok", "unit_id": unit_id, "destination": (x, y)})
+
+    return jsonify({"status": "error", "message": "unit not found"}), 404
 
 def game_loop():
     dt = 1.0/TICK_RATE
