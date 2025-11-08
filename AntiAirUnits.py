@@ -14,8 +14,8 @@ class AntiAir(Unit):
     currentAimTime = 0.0
     target = None
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int ,range: float, ammoCount: int, aimTime: float, timeBetweenShots: float, AAstate: AAStatus):
-        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType,player)
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int ,range: float, ammoCount: int, aimTime: float, timeBetweenShots: float, AAstate: AAStatus, viewRange: int = 100):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType,player, viewRange)
         self.range = range
         self.ammoCount = ammoCount
         self.aimTime = aimTime

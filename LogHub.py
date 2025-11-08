@@ -16,12 +16,14 @@ class LogHub(GroundStructure):
                  transmissionRange: int,
                  max_retransmitters: int = 3,
                  max_uavs: int = 5,
-                 max_air_retransmitters: int = 2):  # NEW
+                 max_air_retransmitters: int = 2,
+                 viewRange: int = 100):  # NEW
         super().__init__(name, position, image, player)
         self.transmissionRange = transmissionRange
         self.available_retransmitters = max_retransmitters
         self.max_deployed_uavs = max_uavs
         self.current_spawned_uavs = 0
+        self.viewRange = viewRange
 
         # NEW: airborne (UAV) retransmitters
         self.max_air_retransmitters = max_air_retransmitters

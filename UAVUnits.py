@@ -39,7 +39,7 @@ class Unit:
     destination = None
 
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int):
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, viewRange: int = 100):
         self.name = name
         self.chanceToHit = chanceToHit
         self.baseSpeed = baseSpeed
@@ -51,6 +51,7 @@ class Unit:
         self.image = image
         self.armourType = armourType
         self.player = player
+        self.viewRange = viewRange
 
     def move_unit(self, destination):
         self.state = UnitState.Moving
@@ -89,8 +90,8 @@ class Unit:
 class UAV(Unit):
     currentBattery = 100.0
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float, usedFrequencies: list = None):
-        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player)
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float, usedFrequencies: list = None, viewRange: int = 100):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, viewRange)
         self.currentWeight = currentWeight
         self.idleBatteryDrainPerTick = idleBatteryDrainPerTick
         self.moveBatteryDrainPerTick = moveBatteryDrainPerTick
@@ -119,8 +120,8 @@ class UAV(Unit):
 
 class LoiteringMunition(UAV):
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float ,payload: float, explosiveType: ExplosiveType, usedFrequencies: list = None):
-        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, currentWeight, idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies)
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float ,payload: float, explosiveType: ExplosiveType, usedFrequencies: list = None, viewRange: int = 100):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, currentWeight, idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies, viewRange)
         self.payload = payload
         self.explosiveType = explosiveType
 
@@ -154,11 +155,12 @@ class RetransmiterUAV(UAV):
                  idleBatteryDrainPerTick: float,
                  moveBatteryDrainPerTick: float,
                  transmissionRange: float,
-                 usedFrequencies: list = None):
+                 usedFrequencies: list = None,
+                 viewRange: int = 100):
         # call normal UAV init
         super().__init__(name, chanceToHit, baseSpeed, state, position, image,
                          armourType, player, currentWeight,
-                         idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies)
+                         idleBatteryDrainPerTick, moveBatteryDrainPerTick, usedFrequencies, viewRange)
         self.transmissionRange = transmissionRange
         # NEW: start turned off
         self.is_retransmitting = False

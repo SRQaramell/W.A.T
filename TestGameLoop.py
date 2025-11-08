@@ -783,9 +783,17 @@ PAGE_TMPL = """
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
-      for (const u of units) {
-        const size = u.size || 24;
-        const half = size / 2;
+          for (const u of units) {
+            const size = u.size || 24;
+            const half = size / 2;
+        
+            const isFriendly = u.player === localPlayer;
+            const isVisible = isFriendly || isPosVisible(u.x, u.y, visionCircles);
+        
+            // if not visible -> skip drawing this unit
+            if (!isVisible) {
+              continue;
+            }
 
         if (u.destination && Array.isArray(u.destination) && u.destination.length === 2) {
           const [dx, dy] = u.destination;
@@ -978,7 +986,8 @@ def get_units():
             "image": getattr(u, "image", None),
             "player": getattr(u, "player", 0),
             "unit_class": u.__class__.__name__,
-            "size": 28
+            "size": 28,
+            "viewRange":getattr(u, "viewRange", 180)
         }
 
         # extra fields for UAVs
