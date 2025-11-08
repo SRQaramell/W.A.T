@@ -237,7 +237,9 @@ PAGE_TMPL = """
       if (u.unit_class === "LogHub") {
         snap.available_retransmitters = u.available_retransmitters;
       }
-      if (u.unit_class === "UAV" || u.unit_class === "LoiteringMunition") {
+      if (u.unit_class === "UAV" ||
+            u.unit_class === "LoiteringMunition" ||
+            u.unit_class === "RetransmiterUAV") {
         snap.currentBattery = u.currentBattery;
         snap.state = u.state;
       }
@@ -256,7 +258,9 @@ PAGE_TMPL = """
       if (a.unit_class === "LogHub") {
         same = same && a.available_retransmitters === b.available_retransmitters;
       }
-        if (a.unit_class === "UAV" || a.unit_class === "LoiteringMunition") {
+        if (a.unit_class === "UAV" ||
+            a.unit_class === "LoiteringMunition" ||
+            a.unit_class === "RetransmiterUAV") {
           same = same &&
             a.currentBattery === b.currentBattery &&
             a.state === b.state;
@@ -1088,7 +1092,7 @@ def spawn_retrans_uav():
         baseSpeed=55,
         state=UAVUnits.UnitState.Idle,
         position=(base.positionX, base.positionY),
-        image="static/images/uav.png",
+        image="static/ICONS/ROTOR ALLY.png",
         armourType=UAVUnits.ArmourType.Unarmored,
         player=base.player,
         currentWeight=1.7,
