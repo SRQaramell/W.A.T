@@ -36,8 +36,9 @@ class Unit:
     nextID = 0
     positionX = 0
     poistionY = 0
+    destination = None
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType):
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int):
         self.name = name
         self.chanceToHit = chanceToHit
         self.baseSpeed = baseSpeed
@@ -48,13 +49,14 @@ class Unit:
         self.positionY = position[1]
         self.image = image
         self.armourType = armourType
+        self.player = player
 
-    def tick_unit(self, destination: (int,int), dt: float):
+    def tick_unit(self, dt: float):
         if self.state != UnitState.Moving:
             return
 
-        targetX = destination[0]
-        targetY = destination[1]
+        targetX = self.destination[0]
+        targetY = self.destination[1]
 
         destinationX = targetX - self.positionX
         destinationY = targetY - self.poistionY
@@ -64,7 +66,7 @@ class Unit:
         if dist == 0:
             self.state = UnitState.Idle
             return
-        effectiveSpeed = self.baseSpeed * getModifiersAtPos(destinationX, destinationY)
+        effectiveSpeed = self.baseSpeed #* getModifiersAtPos(destinationX, destinationY)
 
         maxStep = effectiveSpeed * dt
 
@@ -82,14 +84,14 @@ class Unit:
 class UAV(Unit):
     currentBattery = 100.0
 
-    def __init__(self, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float):
-        super()
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player)
         self.currentWeight = currentWeight
         self.idleBatteryDrainPerTick = idleBatteryDrainPerTick
         self.moveBatteryDrainPerTick = moveBatteryDrainPerTick
 
-    def tick_unit(self, destination: (int,int), dt: float):
-        super().tick_unit(destination, dt)
+    def tick_unit(self, dt: float):
+        super().tick_unit(dt)
         self.currentBattery -= self.getCurrentBatteryDrainPerTick()
         if self.currentBattery <= 0.0:
             self.state = UnitState.Destroyed
@@ -97,14 +99,15 @@ class UAV(Unit):
 
     def getCurrentBatteryDrainPerTick(self):
         if self.state == UnitState.Idle:
-            return self.idleBatteryDrainPerTick * getWindModifiers(self.positionX, self.positionY)
+            return self.idleBatteryDrainPerTick #* getWindModifiers(self.positionX, self.positionY)
         if self.state == UnitState.Moving:
-            return self.moveBatteryDrainPerTick * getWindModifiers(self.positionX, self.positionY)
+            return self.moveBatteryDrainPerTick #* getWindModifiers(self.positionX, self.positionY)
+        return 0.0
 
 class LoiteringMunition(UAV):
 
-    def __init__(self, payload: float, explosiveType: ExplosiveType):
-        super()
+    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int, currentWeight: float, idleBatteryDrainPerTick: float, moveBatteryDrainPerTick: float ,payload: float, explosiveType: ExplosiveType):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, currentWeight, idleBatteryDrainPerTick, moveBatteryDrainPerTick)
         self.payload = payload
         self.explosiveType = explosiveType
 

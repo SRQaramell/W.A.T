@@ -38,10 +38,8 @@ class AntiAir(Unit):
                 return
             self.AAstate = AAStatus.Aiming
 
-
-
     def hitCheck(self, target: UAV):
         calculated = random.randint(1,100)
-        if calculated < self.chanceToHit + getTerrainHitModifiers + getUAVHitModifiers:
+        if calculated < self.chanceToHit: #+ getTerrainHitModifiers + getUAVHitModifiers:
             target.state = UnitState.Destroyed
         return
