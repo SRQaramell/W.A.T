@@ -72,11 +72,25 @@ PAGE_TMPL = """
         .then(res => res.json())
         .then(data => {
           units = data;
+    
+          // recreate images
           units.forEach(u => {
             const img = new Image();
             img.src = u.image;
             u._img = img;
           });
+    
+          // 👇 NEW: if we have something selected, show its latest data
+          if (selectedUnitId !== null) {
+            const selected = units.find(u => u.id === selectedUnitId);
+            if (selected) {
+              updateInfoPanel(selected);
+            } else {
+              // selected unit disappeared
+              infoPanel.innerHTML = "No unit selected.";
+              selectedUnitId = null;
+            }
+          }
         })
         .catch(err => console.error("Failed to fetch units:", err));
     }
@@ -106,8 +120,20 @@ PAGE_TMPL = """
 
       // if click on empty space and a unit is selected → set target using that unit’s speed property
       if (selectedUnitId !== null) {
+        fetch("/move_unit", {
+            method: "POST",
+            headers:  { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: selectedUnitId, x: clickX, y: clickY })
+        })
+        .then(res => res.json())
+        .then(data => {
+            fetchUnits();
+        })
+        .catch(err => console.error(err));
         moveTarget = { x: clickX, y: clickY };
       }
+      
+      
     });
 
     function updateInfoPanel(u) {
@@ -119,30 +145,6 @@ PAGE_TMPL = """
       }
       html += "</ul>";
       infoPanel.innerHTML = html;
-    }
-
-    function updateUnits(dt) {
-      for (const u of units) {
-        if (u.id === selectedUnitId && moveTarget) {
-          const dx = moveTarget.x - u.x;
-          const dy = moveTarget.y - u.y;
-          const dist = Math.sqrt(dx*dx + dy*dy);
-          const speed = u.speed || 100; // use unit’s speed property if present
-
-          if (dist > 1) {
-            const vx = (dx / dist) * speed * (dt / 1000);
-            const vy = (dy / dist) * speed * (dt / 1000);
-            u.x += vx;
-            u.y += vy;
-          } else {
-            moveTarget = null;
-          }
-
-          if (u.id === selectedUnitId) {
-            updateInfoPanel(u);
-          }
-        }
-      }
     }
 
     function drawUnits() {
@@ -185,8 +187,6 @@ PAGE_TMPL = """
       if (!lastTimestamp) lastTimestamp = timestamp;
       const dt = timestamp - lastTimestamp;
       lastTimestamp = timestamp;
-
-      updateUnits(dt);
       drawUnits();
 
       window.requestAnimationFrame(gameLoop);
@@ -194,6 +194,7 @@ PAGE_TMPL = """
 
     // initialization
     fetchUnits();
+    setInterval(fetchUnits, 250)
     window.requestAnimationFrame(gameLoop);
   </script>
 </body>
@@ -230,20 +231,43 @@ def map_image():
 
 
 # --- API: units ---
+
 @app.route("/units")
 def get_units():
     unit_data = []
     for u in units:
-        unit_data.append({
+        data = {
             "id": u.id,
             "name": u.name,
             "x": u.positionX,
             "y": u.positionY,
-            "image": u.image,   # path to image (e.g. "static/images/drone.png")
+            "image": u.image,
             "state": u.state.name,
             "player": u.player,
-            "UAV Type": u.__class__.__name__
-        })
+            "unit_class": u.__class__.__name__,
+            "chanceToHit": getattr(u, "chanceToHit", None),
+            "baseSpeed": getattr(u, "baseSpeed", None),
+            "armourType": u.armourType.name if hasattr(u, "armourType") else None,
+        }
+
+        # extra fields for all UAVs
+        if isinstance(u, UAVUnits.UAV):
+            data.update({
+                "currentBattery": round(u.currentBattery, 2),
+                "currentWeight": u.currentWeight,
+                "idleBatteryDrainPerTick": u.idleBatteryDrainPerTick,
+                "moveBatteryDrainPerTick": u.moveBatteryDrainPerTick,
+            })
+
+        # extra fields for loitering munition
+        if isinstance(u, UAVUnits.LoiteringMunition):
+            data.update({
+                "payload": u.payload,
+                "explosiveType": u.explosiveType.name,
+            })
+
+        unit_data.append(data)
+
     return jsonify(unit_data)
 
 # --- API: select unit ---
