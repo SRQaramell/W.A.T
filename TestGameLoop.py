@@ -83,7 +83,7 @@ PAGE_TMPL = """
     </label>
   </div>
 
-  <canvas id="canvas" width="800" height="600"></canvas>
+  <canvas id="canvas" width="1024" height="1024"></canvas>
   <div id="infoPanel">
     <h2>Selected Unit Info</h2>
     <div id="unitInfo">No unit selected.</div>
@@ -93,6 +93,12 @@ PAGE_TMPL = """
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
     const infoPanel = document.getElementById("unitInfo");
+    const mapImage = new Image();
+    mapImage.src = "static/images/sampleMap.png";
+    let mapLoaded = false;
+    mapImage.onload = () => {
+      mapLoaded = true;
+    };
 
     // NEW: visibility flags
     let showTransmission = true;
@@ -497,7 +503,12 @@ PAGE_TMPL = """
     }
 
     function drawUnits() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (mapLoaded) {
+          ctx.drawImage(mapImage, 0, 0, canvas.width, canvas.height);
+        } else {
+          ctx.fillStyle = "#303030"; // fallback background
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
 
       for (const u of units) {
         const size = u.size || 24;
