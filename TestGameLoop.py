@@ -83,8 +83,7 @@ PAGE_TMPL = """
     }
 
     function makeUnitSnapshot(u) {
-      // keep only stable fields that show in panel
-      return {
+      const snap = {
         id: u.id,
         name: u.name,
         unit_class: u.unit_class,
@@ -93,16 +92,31 @@ PAGE_TMPL = """
         x: u.x,
         y: u.y
       };
+    
+      // bases (LogHub) have this and we want panel to refresh when it changes
+      if (u.unit_class === "LogHub") {
+        snap.available_retransmitters = u.available_retransmitters;
+      }
+    
+      return snap;
     }
     
     function isSameUnitSnapshot(a, b) {
-      return a.id === b.id &&
-             a.name === b.name &&
-             a.unit_class === b.unit_class &&
-             a.player === b.player &&
-             a.transmissionRange === b.transmissionRange &&
-             a.x === b.x &&
-             a.y === b.y;
+      let same =
+        a.id === b.id &&
+        a.name === b.name &&
+        a.unit_class === b.unit_class &&
+        a.player === b.player &&
+        a.transmissionRange === b.transmissionRange &&
+        a.x === b.x &&
+        a.y === b.y;
+    
+      // for bases, also check available_retransmitters
+      if (a.unit_class === "LogHub") {
+        same = same && a.available_retransmitters === b.available_retransmitters;
+      }
+    
+      return same;
     }
 
 
@@ -134,6 +148,7 @@ PAGE_TMPL = """
               selectedUnitSnapshot = null;
             }
           }
+          return units;
         })
         .catch(err => console.error("Failed to fetch units:", err));
     }
@@ -172,10 +187,17 @@ PAGE_TMPL = """
             .then(d => {
               if (d.status === "ok") {
                 placeRetransmitterMode = false;
-                const prevBaseId = placingBaseId;
+                const baseId = placingBaseId;
                 placingBaseId = null;
                 placingBaseData = null;
-                fetchUnits();
+                fetchUnits().then((unitsNow) => {
+                    const baseNow = units.find(u => u.id === baseId);
+                    if (baseNow) {
+                        updateInfoPanel(baseNow);
+                        // keep snapshot in sync if you use snapshot logic
+                        selectedUnitSnapshot = makeUnitSnapshot(baseNow);
+                    }
+                });
                 // try to uncheck the box if the same base is still shown
                 const chk = document.getElementById("placeRtChk");
                 const hint = document.getElementById("placeHint");
@@ -375,8 +397,6 @@ PAGE_TMPL = """
           }
         }
 
-
-
     let lastTimestamp = null;
     function gameLoop(timestamp) {
       if (!lastTimestamp) lastTimestamp = timestamp;
@@ -490,7 +510,8 @@ def get_units():
             # give bases a pseudo-id if they don't have one
             # simplest: index in list, but better to really give them an id once at creation
             data.update({
-                "transmissionRange": u.transmissionRange
+                "transmissionRange": u.transmissionRange,
+                "available_retransmitters": getattr(u, "available_retransmitters",0)
             })
 
         if isinstance(u, LogHub.GroundRetransmitter):
@@ -576,10 +597,9 @@ def place_retransmitter():
     if base is None:
         return jsonify({"status": "error", "message": "base not found"}), 404
 
-    # count current retransmitters for this base
-    current_for_base = [r for r in ground_retransmitters if r.parent_base_id == base_id]
-    if len(current_for_base) >= 3:
-        return jsonify({"status": "error", "message": "this base already has 3 retransmitters"}), 400
+    # check if base still has quota
+    if getattr(base, "available_retransmitters", 0) <= 0:
+        return jsonify({"status": "error", "message": "this base has no retransmitters left"}), 400
 
     # check that (x, y) is inside base transmission range
     dx = x - base.positionX
@@ -588,18 +608,22 @@ def place_retransmitter():
     if dist > base.transmissionRange:
         return jsonify({"status": "error", "message": "point outside base transmission range"}), 400
 
-    # create retransmitter — choose whatever image you have
+    # create retransmitter
     retrans = LogHub.GroundRetransmitter(
-        name=f"RT-{base_id}-{len(current_for_base)+1}",
+        name=f"RT-{base_id}",
         position=(x, y),
         image="static/images/retransmitter.png",
         player=base.player,
-        transmissionRange=200,  # or base.transmissionRange, up to you
+        transmissionRange=200,
         parent_base_id=base_id
     )
     ground_retransmitters.append(retrans)
 
-    return jsonify({"status": "ok"})
+    # decrease available on the base
+    base.available_retransmitters -= 1
+
+    return jsonify({"status": "ok", "available": base.available_retransmitters})
+
 
 
 def is_uav_in_comm(uav, bases, retransmitters):
