@@ -95,6 +95,11 @@ PAGE_TMPL = """
         <input type="checkbox" id="chkEnemyAA" checked>
         Show enemy AA ranges
       </label>
+      <div style="margin-bottom:6px;">
+        <button id="zoomInBtn">Zoom +</button>
+        <button id="zoomOutBtn">Zoom -</button>
+        <span id="zoomLabel">100%</span>
+      </div>
       <hr>
       <div><strong>Admin spawn</strong></div>
       <div>
@@ -202,8 +207,22 @@ PAGE_TMPL = """
 
   <script>
     const canvas = document.getElementById("canvas");
+    let zoom = 1.0;
+    let offsetX = 0;
+    let offsetY = 0;
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 3.0;
+    const ZOOM_STEP = 0.1;
+    let isPanning = false;
+    let panStartScreenX = 0;
+    let panStartScreenY = 0;
+    let panStartOffsetX = 0;
+    let panStartOffsetY = 0;
     const ctx = canvas.getContext("2d");
     const infoPanel = document.getElementById("unitInfo");
+    const zoomInBtn = document.getElementById("zoomInBtn");
+    const zoomOutBtn = document.getElementById("zoomOutBtn");
+    const zoomLabel = document.getElementById("zoomLabel");
     const mapImage = new Image();
     mapImage.src = "static/images/sampleMap.png";
     let mapLoaded = false;
@@ -371,6 +390,37 @@ PAGE_TMPL = """
       return base + bonus;
     }
 
+    function setZoom(newZoom, centerX, centerY) {
+      newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+      const oldZoom = zoom;
+      zoom = newZoom;
+    
+      // keep zoom centered (defaults to canvas center)
+      const cx = centerX ?? (canvas.width / 2);
+      const cy = centerY ?? (canvas.height / 2);
+      const scale = zoom / oldZoom;
+      offsetX = cx - (cx - offsetX) * scale;
+      offsetY = cy - (cy - offsetY) * scale;
+    
+      if (zoomLabel) {
+        zoomLabel.textContent = Math.round(zoom * 100) + "%";
+      }
+    }
+    
+    if (zoomInBtn) zoomInBtn.onclick = () => setZoom(zoom + ZOOM_STEP);
+    if (zoomOutBtn) zoomOutBtn.onclick = () => setZoom(zoom - ZOOM_STEP);
+
+    canvas.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const screenX = (e.clientX - rect.left) * scaleX;
+      const screenY = (e.clientY - rect.top)  * scaleY;
+    
+      const dir = e.deltaY < 0 ? 1 : -1;
+      setZoom(zoom + dir * ZOOM_STEP, screenX, screenY);
+    }, { passive: false });
 
     function startRetransmitterPlacing(baseId, baseData) {
       placeRetransmitterMode = true;
@@ -485,11 +535,17 @@ PAGE_TMPL = """
 
     canvas.addEventListener("click", (event) => {
 
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const clickX = (event.clientX - rect.left) * scaleX;
-      const clickY = (event.clientY - rect.top)  * scaleY;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        // screen coords in canvas space
+        const screenX = (event.clientX - rect.left) * scaleX;
+        const screenY = (event.clientY - rect.top)  * scaleY;
+        
+        // convert screen -> world (inverse of draw transform)
+        const clickX = (screenX - offsetX) / zoom;
+        const clickY = (screenY - offsetY) / zoom;
     
           // 1) ADMIN DESTROY?
           if (adminDestroyMode) {
@@ -771,11 +827,14 @@ PAGE_TMPL = """
     });
     
     canvas.addEventListener("mousemove", (event) => {
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const mx = (event.clientX - rect.left) * scaleX;
-      const my = (event.clientY - rect.top)  * scaleY;
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const screenX = (event.clientX - rect.left) * scaleX;
+        const screenY = (event.clientY - rect.top)  * scaleY;
+        const mx = (screenX - offsetX) / zoom;
+        const my = (screenY - offsetY) / zoom;
     
       // reset by default
       let newHoveredId = null;
@@ -813,6 +872,54 @@ PAGE_TMPL = """
       hoveredTargetId = newHoveredId;
       hoveredTargetChance = newHoveredChance;
     });
+    
+    // start panning with right or middle button
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button === 1 || e.button === 2) { // middle or right
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const screenX = (e.clientX - rect.left) * scaleX;
+        const screenY = (e.clientY - rect.top) * scaleY;
+    
+        isPanning = true;
+        panStartScreenX = screenX;
+        panStartScreenY = screenY;
+        panStartOffsetX = offsetX;
+        panStartOffsetY = offsetY;
+      }
+    });
+    
+    // dragging
+    canvas.addEventListener("mousemove", (e) => {
+      if (!isPanning) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const screenX = (e.clientX - rect.left) * scaleX;
+      const screenY = (e.clientY - rect.top) * scaleY;
+    
+      const dx = screenX - panStartScreenX;
+      const dy = screenY - panStartScreenY;
+    
+      offsetX = panStartOffsetX + dx;
+      offsetY = panStartOffsetY + dy;
+    });
+    
+    // stop panning
+    canvas.addEventListener("mouseup", () => {
+      isPanning = false;
+    });
+    canvas.addEventListener("mouseleave", () => {
+      isPanning = false;
+    });
+    
+    // no browser context menu on right-click over canvas
+    canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+    });
+
     
     document.addEventListener("keydown", (e) => {
       // avoid repeating when key is held down and browser fires repeat events
@@ -1054,6 +1161,15 @@ PAGE_TMPL = """
     }
 
     function drawUnits() {
+    
+        // reset transform and clear first
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+        // everything below is drawn in world coords, so apply zoom+pan
+        ctx.save();
+        ctx.setTransform(zoom, 0, 0, zoom, offsetX, offsetY);
+    
         if (mapLoaded) {
           ctx.drawImage(mapImage, 0, 0, canvas.width, canvas.height);
         } else {
@@ -1239,13 +1355,15 @@ PAGE_TMPL = """
         
       }
 
-      if (moveTarget) {
-        ctx.beginPath();
-        ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
-        ctx.strokeStyle = "blue";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+        if (moveTarget) {
+          ctx.beginPath();
+          ctx.arc(moveTarget.x, moveTarget.y, 6, 0, Math.PI * 2);
+          ctx.strokeStyle = "blue";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+    
+        ctx.restore();
     }
 
     let lastTimestamp = null;
