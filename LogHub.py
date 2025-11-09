@@ -32,7 +32,7 @@ class LogHub(GroundStructure):
                  max_uavs: int = 5,
                  max_air_retransmitters: int = 2,
                  viewRange: int = 100,
-                 storage: dict = {}):  # NEW
+                 storage: dict | None = None):  # NEW
         super().__init__(name, position, image, player)
         self.transmissionRange = transmissionRange
         self.available_retransmitters = max_retransmitters
@@ -44,7 +44,9 @@ class LogHub(GroundStructure):
         self.max_air_retransmitters = max_air_retransmitters
         self.current_air_retransmitters = 0
 
-        self.inStorage = storage
+        self.inStorage = dict(storage) if storage is not None else {}
+        self.max_supply_trucks = 2
+        self.current_supply_trucks = 0
 
 
 class GroundRetransmitter(GroundStructure):

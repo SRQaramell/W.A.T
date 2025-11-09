@@ -1748,25 +1748,30 @@ def spawn_supply_vehicle(from_base: LogHub.LogHub,
                          target_unit,
                          supply_type: LogHub.SupplyType,
                          amount: int):
-    # clamp to what base really has
+    # 1) check truck quota first
+    if getattr(from_base, "current_supply_trucks", 0) >= getattr(from_base, "max_supply_trucks", 2):
+        # hub is “busy” – don’t spawn another truck
+        return None
+
+    # 2) check storage
     available = from_base.inStorage.get(supply_type, 0)
     if available <= 0:
         return None
     amount = min(amount, available)
 
-    # reserve immediately (so 2 units don't over-allocate)
+    # reserve supply right away
     from_base.inStorage[supply_type] = available - amount
 
-    # choose icon by player (reuse what you have)
+    # choose icon
     if from_base.player == 1:
-        image = "static/ICONS/HQ_ALLY.png"
+        image = "static/ICONS/LOGISTYKA ALLY.png"
     else:
-        image = "static/ICONS/HQ_ENEMY.png"
+        image = "static/ICONS/LOGISTYKA ENEMY.png"
 
     veh = GroundUnits.SupplyVehicle(
         name=f"SUP-{from_base.id}",
         chanceToHit=0,
-        baseSpeed=40,   # ground speed, tune as needed
+        baseSpeed=10,
         state=UAVUnits.UnitState.Idle,
         position=(from_base.positionX, from_base.positionY),
         image=image,
@@ -1781,9 +1786,14 @@ def spawn_supply_vehicle(from_base: LogHub.LogHub,
     # send it to the unit
     veh.move_unit((target_unit.positionX, target_unit.positionY))
 
-    # and put it into the main 'units' list so the loop ticks it
+    # put to world
     units.append(veh)
+
+    # 3) mark that this hub now has one more active truck
+    from_base.current_supply_trucks += 1
+
     return veh
+
 
 
 def find_nearest_loghub_with_supply(player: int,
@@ -1795,9 +1805,18 @@ def find_nearest_loghub_with_supply(player: int,
     for b in logBases:
         if b.player != player:
             continue
+
         storage = getattr(b, "inStorage", {}) or {}
         if storage.get(supply_type, 0) <= 0:
             continue
+
+        # NEW: also require free ground supply truck slot
+        current_trucks = getattr(b, "current_supply_trucks", 0)
+        max_trucks = getattr(b, "max_supply_trucks", 2)
+        if current_trucks >= max_trucks:
+            # hub is busy – skip it
+            continue
+
         dx = x - b.positionX
         dy = y - b.positionY
         dist = math.hypot(dx, dy)
@@ -1805,6 +1824,7 @@ def find_nearest_loghub_with_supply(player: int,
             best_dist = dist
             best_base = b
     return best_base
+
 
 
 def is_uav_in_comm(uav, bases, retransmitters):
@@ -1959,14 +1979,22 @@ def game_loop():
                     # are we close enough to deliver?
                     dx = target.positionX - u.positionX
                     dy = target.positionY - u.positionY
-                    if math.hypot(dx, dy) < 5:   # delivery radius
-                        # deliver
+                    if math.hypot(dx, dy) < 5:  # delivery radius
                         if hasattr(target, "ammoCount") and hasattr(target, "ammoType"):
-                            # only deliver matching type
                             if target.ammoType == u.cargoType:
                                 target.ammoCount += u.cargoAmmount
-                                # allow next requests later
+
+                                # allow unit to request again in the future
                                 setattr(target, "supplyRequested", False)
+
+                                # if this was an AA unit – wake it up
+                                if hasattr(target, "AAstate"):
+                                    target.AAstate = AntiAirUnits.AAStatus.Idle
+                                    # also clear any old target/aim timer so it can pick a new one cleanly
+                                    if hasattr(target, "target"):
+                                        target.target = None
+                                    if hasattr(target, "currentAimTime"):
+                                        target.currentAimTime = 0.0
 
                         # after delivering -> go home
                         home = next((b for b in logBases if b.id == u.home_base_id), None)
@@ -1979,13 +2007,53 @@ def game_loop():
                 elif u.phase == "to_base":
                     home = next((b for b in logBases if b.id == u.home_base_id), None)
                     if home is None:
+                        # no base anymore -> just despawn
                         units.remove(u)
                         continue
+
                     dx = home.positionX - u.positionX
                     dy = home.positionY - u.positionY
                     if math.hypot(dx, dy) < 5:
-                        # arrived -> despawn
+                        # arrived -> free the truck slot on that hub
+                        if hasattr(home, "current_supply_trucks"):
+                            home.current_supply_trucks = max(0, home.current_supply_trucks - 1)
+
                         units.remove(u)
+
+        # --- handle destroyed supply trucks (resend request) ---
+        for u in list(units):
+            if isinstance(u, GroundUnits.SupplyVehicle) and u.state == UAVUnits.UnitState.Destroyed:
+                # find the unit/structure it was supposed to supply
+                target = next((x for x in units + aaUnits + logBases
+                               if getattr(x, "id", None) == u.target_unit_id), None)
+
+                if target is not None:
+                    # allow it to ask again
+                    setattr(target, "supplyRequested", False)
+
+                    # figure out what it needed
+                    needed_type = None
+                    still_needs = False
+                    if hasattr(target, "ammoCount") and hasattr(target, "ammoType"):
+                        if target.ammoCount <= 0:
+                            needed_type = target.ammoType
+                            still_needs = True
+
+                    if still_needs and needed_type is not None:
+                        # try to send a new truck from ANY hub that has supply AND free trucks
+                        base = find_nearest_loghub_with_supply(
+                            target.player,
+                            needed_type,
+                            target.positionX,
+                            target.positionY
+                        )
+                        if base is not None:
+                            spawned = spawn_supply_vehicle(base, target, needed_type, amount=5)
+                            if spawned is not None:
+                                # mark that the target is being supplied again
+                                target.supplyRequested = True
+                # IMPORTANT: we do NOT give the truck slot back to the original hub here,
+                # because the truck was destroyed
 
 
         units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
