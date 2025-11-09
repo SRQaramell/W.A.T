@@ -3,6 +3,7 @@ import random
 from enum import Enum
 
 from UAVUnits import Unit, UAV, UnitState, ArmourType
+from LogHub import SupplyType
 
 class AAStatus(Enum):
     Idle = 1
@@ -14,10 +15,28 @@ class AntiAir(Unit):
     currentAimTime = 0.0
     target = None
 
-    def __init__(self, name: str, chanceToHit: int, baseSpeed: float, state: UnitState, position: (int,int), image: str, armourType: ArmourType, player: int ,range: float, ammoCount: int, aimTime: float, timeBetweenShots: float, AAstate: AAStatus, viewRange: int = 100):
-        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType,player, viewRange)
+    def __init__(self,
+                 name: str,
+                 chanceToHit: int,
+                 baseSpeed: float,
+                 state: UnitState,
+                 position: (int,int),
+                 image: str,
+                 armourType: ArmourType,
+                 player: int,
+                 range: float,
+                 ammoCount: int = 0,
+                 ammoType: SupplyType = SupplyType.AAMunition,   # <-- new typed ammo type
+                 aimTime: float = 1.0,
+                 timeBetweenShots: float = 1.0,
+                 AAstate: AAStatus = AAStatus.Idle,
+                 viewRange: int = 100):
+        super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player, viewRange)
         self.range = range
+        # numeric amount (still kept for now)
         self.ammoCount = ammoCount
+        # the ammo *type* used by this AA (unified with LogHub SupplyType)
+        self.ammoType = ammoType
         self.aimTime = aimTime
         self.timeBetweenShots = timeBetweenShots
         self.AAstate = AAstate

@@ -1229,7 +1229,8 @@ def get_units():
                 "armourType": u.armourType.name if hasattr(u, "armourType") else None,
                 "range": u.range,
                 "aa_state": u.AAstate.name,
-                "ammo": u.ammoCount
+                "ammo": u.ammoCount,
+                "ammoType": u.ammoType.name if hasattr(u, "ammoType") else None
             })
             if u.target is not None:
                 data["aa_target"] = [u.target.positionX, u.target.positionY]
@@ -1648,6 +1649,7 @@ def admin_spawn():
             player=player,
             range=150,
             ammoCount=5,
+            ammoType=LogHub.SupplyType.AAMunition,
             aimTime=1.0,
             timeBetweenShots=2.0,
             AAstate=AntiAirUnits.AAStatus.Idle
