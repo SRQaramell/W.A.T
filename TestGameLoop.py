@@ -140,6 +140,30 @@ PAGE_TMPL = """
             Click unit/structure to DESTROY
           </label>
         </div>
+        
+        <div style="margin-top:6px;">
+          <label>LM explosive:
+            <select id="adminLmExplosive">
+              <option value="HE_FRAG">HE_FRAG</option>
+              <option value="HEAT" selected>HEAT</option>
+              <option value="FAE">FAE</option>
+            </select>
+          </label>
+        </div>
+        
+        <div style="margin-top:6px;">
+          <label>LM comm freqs (comma):
+            <input id="adminLmFreqs" type="text" value="2400" style="width:120px;">
+          </label>
+        </div>
+        
+        <!-- also add optional RUAV frequency override -->
+        <div style="margin-top:6px;">
+          <label>RT-UAV freqs (comma):
+            <input id="adminRtFreqs" type="text" value="5600" style="width:120px;">
+          </label>
+        </div>
+        
       <hr>
       <div><strong>Admin supply</strong></div>
       <div>
@@ -164,7 +188,6 @@ PAGE_TMPL = """
         </label>
       </div>
       <button id="adminAddSupplyBtn" style="margin-top:4px;">Add to selected LogHub</button>
-
       <p id="adminMsg" style="font-size:11px;color:#333;"></p>
     </div>
 
@@ -523,6 +546,23 @@ PAGE_TMPL = """
               const jamFreqs = jamFreqText.split(",").map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
               payload.jammingRange = jamRange;
               payload.jammingFreq = jamFreqs;
+            }
+            
+            // NEW: LoiteringMunition options
+            if (adminUnitType.value === "LoiteringMunition") {
+              const expl = document.getElementById("adminLmExplosive").value || "HEAT";
+              const lfText = document.getElementById("adminLmFreqs").value || "";
+              const lf = lfText.split(",").map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+              payload.explosiveType = expl;
+              // only send usedFrequencies if user supplied any; otherwise server may apply default
+              if (lf.length > 0) payload.usedFrequencies = lf;
+            }
+            
+            // NEW: optional RetransmiterUAV frequency override
+            if (adminUnitType.value === "RetransmiterUAV") {
+              const ruvText = document.getElementById("adminRtFreqs").value || "";
+              const ruvFreqs = ruvText.split(",").map(s => parseFloat(s.trim())).filter(n => !Number.isNaN(n));
+              if (ruvFreqs.length > 0) payload.usedFrequencies = ruvFreqs;
             }
             
             fetch("/admin_spawn", {
@@ -1725,6 +1765,21 @@ def admin_spawn():
             img = "static/ICONS/UAV ALLY.png"
         else:
             img = "static/ICONS/UAV ENEMY.png"
+
+        # read optional params
+        expl_str = data.get("explosiveType", "HEAT")
+        used_freqs = data.get("usedFrequencies", [2400])
+
+        # normalize used_freqs (client might send string or list)
+        if isinstance(used_freqs, str):
+            used_freqs = [float(s.strip()) for s in used_freqs.split(",") if s.strip()]
+
+        # convert explosive type string -> enum (fallback to HEAT on invalid)
+        try:
+            expl_enum = UAVUnits.ExplosiveType[expl_str]
+        except Exception:
+            expl_enum = UAVUnits.ExplosiveType.HEAT
+
         lm = UAVUnits.LoiteringMunition(
             name=f"LM-admin-{len(units)}",
             chanceToHit=50,
@@ -1738,10 +1793,12 @@ def admin_spawn():
             idleBatteryDrainPerTick=0.0083,
             moveBatteryDrainPerTick=0.0138,
             payload=1.0,
-            explosiveType=UAVUnits.ExplosiveType.HEAT
+            explosiveType=expl_enum,
+            usedFrequencies=used_freqs
         )
         units.append(lm)
         return jsonify({"status": "ok", "spawned": "LoiteringMunition", "id": lm.id})
+
 
     elif unit_type == "AntiAir":
         if player == 1:
@@ -1803,6 +1860,10 @@ def admin_spawn():
             img = "static/ICONS/ROTOR ALLY.png"
         else:
             img = "static/ICONS/ROTOR ENEMY.png"
+
+        used_freqs = data.get("usedFrequencies", [5600])
+        if isinstance(used_freqs, str):
+            used_freqs = [float(s.strip()) for s in used_freqs.split(",") if s.strip()]
 
         ruav = UAVUnits.RetransmiterUAV(
             name=f"RT-UAV-admin-{len(units)}",
