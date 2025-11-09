@@ -1487,7 +1487,9 @@ def get_units():
             data.update({
                 "cargoType": u.cargoType.name,
                 "cargoAmmount": u.cargoAmmount,
-                "armourType": u.armourType.name
+                "armourType": u.armourType.name,
+                "fuel": getattr(u, "currentFuel", None),
+                "maxFuel": getattr(u, "maxFuel", None)
             })
 
         # extra fields for AntiAir
@@ -2045,6 +2047,14 @@ def spawn_supply_vehicle(from_base: LogHub.LogHub,
     # reserve supply right away
     from_base.inStorage[supply_type] = available - amount
 
+    # --- NEW: fuel for the truck ---
+    TRUCK_MAX_FUEL = 40.0           # you can tweak
+    TRUCK_FUEL_PER_TICK = 0.005      # you can tweak
+    fuel_available = from_base.inStorage.get(LogHub.SupplyType.Fuel, 0)
+    taken_fuel = min(TRUCK_MAX_FUEL, fuel_available)
+    if taken_fuel > 0:
+        from_base.inStorage[LogHub.SupplyType.Fuel] = fuel_available - taken_fuel
+
     # choose icon
     if from_base.player == 1:
         image = "static/ICONS/LOGISTYKA ALLY.png"
@@ -2063,7 +2073,9 @@ def spawn_supply_vehicle(from_base: LogHub.LogHub,
         cargoType=supply_type,
         cargoAmmount=amount,
         target_unit_id=getattr(target_unit, "id"),
-        home_base_id=from_base.id
+        home_base_id=from_base.id,
+        max_fuel=taken_fuel,
+        fuel_consumption_per_tick=TRUCK_FUEL_PER_TICK
     )
 
     # send it to the unit
@@ -2290,17 +2302,24 @@ def game_loop():
                 elif u.phase == "to_base":
                     home = next((b for b in logBases if b.id == u.home_base_id), None)
                     if home is None:
-                        # no base anymore -> just despawn
                         units.remove(u)
                         continue
 
                     dx = home.positionX - u.positionX
                     dy = home.positionY - u.positionY
                     if math.hypot(dx, dy) < 5:
+                        # NEW: return remaining fuel to hub
+                        remaining_fuel = getattr(u, "currentFuel", 0)
+                        if remaining_fuel > 0:
+                            if getattr(home, "inStorage", None) is None:
+                                home.inStorage = {}
+                            home.inStorage[LogHub.SupplyType.Fuel] = home.inStorage.get(LogHub.SupplyType.Fuel, 0) + remaining_fuel
+
                         # arrived -> free the truck slot on that hub
                         if hasattr(home, "current_supply_trucks"):
                             home.current_supply_trucks = max(0, home.current_supply_trucks - 1)
 
+                        # truck is done
                         units.remove(u)
 
         # --- handle destroyed supply trucks (resend request) ---
