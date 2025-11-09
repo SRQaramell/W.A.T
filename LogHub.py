@@ -11,6 +11,7 @@ class SupplyType(Enum):
     Gruz300 = 8
     SpareParts = 9
     Other = 10
+    TanksShells = 11
 
 class GroundStructure:
     nextId = 0
