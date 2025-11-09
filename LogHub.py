@@ -1,3 +1,17 @@
+from enum import Enum
+
+class SupplyType(Enum):
+    AAMunition = 1
+    Fuel = 2
+    Food = 3
+    Munition = 4
+    Explosives = 5
+    MedicalSupplies = 6
+    Gruz200 = 7
+    Gruz300 = 8
+    SpareParts = 9
+    Other = 10
+
 class GroundStructure:
     nextId = 0
 
