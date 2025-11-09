@@ -140,6 +140,31 @@ PAGE_TMPL = """
             Click unit/structure to DESTROY
           </label>
         </div>
+      <hr>
+      <div><strong>Admin supply</strong></div>
+      <div>
+        <label>Supply:
+          <select id="adminSupplyType">
+            <option value="AAMunition">AA munition</option>
+            <option value="Fuel">Fuel</option>
+            <option value="Food">Food</option>
+            <option value="Munition">Munition</option>
+            <option value="Explosives">Explosives</option>
+            <option value="MedicalSupplies">Medical supplies</option>
+            <option value="Gruz200">Gruz200</option>
+            <option value="Gruz300">Gruz300</option>
+            <option value="SpareParts">Spare parts</option>
+            <option value="Other">Other</option>
+          </select>
+        </label>
+      </div>
+      <div>
+        <label>Amount:
+          <input id="adminSupplyAmount" type="number" value="10" style="width:70px;">
+        </label>
+      </div>
+      <button id="adminAddSupplyBtn" style="margin-top:4px;">Add to selected LogHub</button>
+
       <p id="adminMsg" style="font-size:11px;color:#333;"></p>
     </div>
 
@@ -178,9 +203,56 @@ PAGE_TMPL = """
     const adminPlaceModeChk = document.getElementById("adminPlaceMode");
     const adminMsg = document.getElementById("adminMsg");
     const adminDestroyModeChk = document.getElementById("adminDestroyMode");
-
+    const adminSupplyType = document.getElementById("adminSupplyType");
+    const adminSupplyAmount = document.getElementById("adminSupplyAmount");
+    const adminAddSupplyBtn = document.getElementById("adminAddSupplyBtn");
     
     let adminDestroyMode = false;
+    
+    adminAddSupplyBtn.addEventListener("click", () => {
+      if (selectedUnitId === null) {
+        adminMsg.textContent = "Select a LogHub first.";
+        return;
+      }
+      const selected = units.find(u => u.id === selectedUnitId);
+      if (!selected || selected.unit_class !== "LogHub") {
+        adminMsg.textContent = "Selected object is not a LogHub.";
+        return;
+      }
+
+      const supply = adminSupplyType.value;
+      const amount = parseInt(adminSupplyAmount.value, 10) || 0;
+
+      fetch("/admin_add_supply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_id: selectedUnitId,
+          supply_type: supply,
+          amount: amount
+        })
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.status === "ok") {
+          adminMsg.textContent = "Supply added.";
+          // refresh units so info panel updates
+        const u = units.find(x => x.id === selectedUnitId);
+        if (u && d.storage) {
+          u.storage = d.storage;
+          updateInfoPanel(u); // instant refresh
+        }
+          fetchUnits();
+        } else {
+          adminMsg.textContent = d.message || "Error adding supply";
+        }
+      })
+      .catch(err => {
+        console.error(err);
+        adminMsg.textContent = "Error adding supply";
+      });
+    });
+
     
     adminDestroyModeChk.addEventListener("change", () => {
       adminDestroyMode = adminDestroyModeChk.checked;
@@ -277,6 +349,7 @@ PAGE_TMPL = """
         snap.max_spawned_uavs = u.max_spawned_uavs;
         snap.current_air_retransmitters = u.current_air_retransmitters;
         snap.max_air_retransmitters = u.max_air_retransmitters;
+        snap.storage_json = JSON.stringify(u.storage || {});
       }
     
       // IMPORTANT: do NOT put battery/state/is_retransmitting here
@@ -303,6 +376,7 @@ PAGE_TMPL = """
           a.max_spawned_uavs === b.max_spawned_uavs &&
           a.current_air_retransmitters === b.current_air_retransmitters &&
           a.max_air_retransmitters === b.max_air_retransmitters;
+          a.storage_json === JSON.stringify(b.storage || {});
       }
     
       // NOTE: we purposely do NOT compare battery/state for UAVs here
@@ -713,11 +787,24 @@ PAGE_TMPL = """
 
       let html = "<ul>";
       for (const key in u) {
-        if (u.hasOwnProperty(key) && key !== "_img") {
-          html += `<li><strong>${key}:</strong> ${u[key]}</li>`;
-        }
+        if (!u.hasOwnProperty(key) || key === "_img" || key === "storage") continue;
+        html += `<li><strong>${key}:</strong> ${u[key]}</li>`;
       }
       html += "</ul>";
+
+      if (isBase) {
+        const storage = u.storage || {};
+        html += `<h3>Storage</h3>`;
+        if (Object.keys(storage).length === 0) {
+          html += `<p>(empty)</p>`;
+        } else {
+          html += `<ul>`;
+          for (const [sName, sAmt] of Object.entries(storage)) {
+            html += `<li>${sName}: ${sAmt}</li>`;
+          }
+          html += `</ul>`;
+        }
+      }
 
         if (isBase) {
           const curr = u.current_spawned_uavs ?? 0;
@@ -1153,15 +1240,21 @@ def get_units():
 
         # extra fields for LogHub (the bases)
         if isinstance(u, LogHub.LogHub):
-            # give bases a pseudo-id if they don't have one
-            # simplest: index in list, but better to really give them an id once at creation
+            # turn enum-keyed dict into plain {name: amount}
+            storage_dict = {}
+            if getattr(u, "inStorage", None):
+                for k, v in u.inStorage.items():
+                    # k is SupplyType
+                    storage_dict[k.name if hasattr(k, "name") else str(k)] = v
+
             data.update({
                 "transmissionRange": u.transmissionRange,
-                "available_retransmitters": getattr(u, "available_retransmitters",0),
+                "available_retransmitters": getattr(u, "available_retransmitters", 0),
                 "current_spawned_uavs": getattr(u, "current_spawned_uavs", 0),
                 "max_spawned_uavs": getattr(u, "max_deployed_uavs", 5),
                 "current_air_retransmitters": getattr(u, "current_air_retransmitters", 0),
-                "max_air_retransmitters": getattr(u, "max_air_retransmitters", 2)
+                "max_air_retransmitters": getattr(u, "max_air_retransmitters", 2),
+                "storage": storage_dict
             })
 
         if isinstance(u, LogHub.GroundRetransmitter):
@@ -1465,6 +1558,45 @@ def toggle_uav_retransmitter():
 
     uav.is_retransmitting = active
     return jsonify({"status": "ok", "active": uav.is_retransmitting})
+
+@app.route("/admin_add_supply", methods=["POST"])
+def admin_add_supply():
+    data = request.get_json()
+    base_id = data.get("base_id")
+    supply_type = data.get("supply_type")
+    amount = int(data.get("amount", 0))
+
+    if base_id is None or supply_type is None:
+        return jsonify({"status": "error", "message": "base_id and supply_type required"}), 400
+
+    # find the LogHub
+    base = next((b for b in logBases if b.id == base_id), None)
+    if base is None:
+        return jsonify({"status": "error", "message": "LogHub not found"}), 404
+
+    # validate supply type
+    try:
+        st_enum = LogHub.SupplyType[supply_type]
+    except KeyError:
+        return jsonify({"status": "error", "message": f"Unknown supply type: {supply_type}"}), 400
+
+    if amount <= 0:
+        return jsonify({"status": "error", "message": "amount must be > 0"}), 400
+
+    # make sure storage dict exists
+    if getattr(base, "inStorage", None) is None:
+        base.inStorage = {}
+
+    current = base.inStorage.get(st_enum, 0)
+    base.inStorage[st_enum] = current + amount
+
+    # return fresh storage as plain dict
+    storage_dict = {k.name: v for k, v in base.inStorage.items()}
+    return jsonify({
+        "status": "ok",
+        "base_id": base.id,
+        "storage": storage_dict
+    })
 
 
 @app.route("/admin_spawn", methods=["POST"])
