@@ -5,7 +5,7 @@ import math
 from flask import Flask, request, send_file, render_template_string, jsonify
 from io import BytesIO
 from PIL import Image, ImageDraw
-import UAVUnits, AntiAirUnits, LogHub
+import UAVUnits, AntiAirUnits, LogHub, GroundUnits
 
 app = Flask(__name__)
 
@@ -1222,6 +1222,12 @@ def get_units():
                 "explosiveType": u.explosiveType.name,
             })
 
+        if isinstance(u, GroundUnits.SupplyVehicle):
+            data.update({
+                "cargoType": u.cargoType.name,
+                "cargoAmmount": u.cargoAmmount,
+            })
+
         # extra fields for AntiAir
         if isinstance(u, AntiAirUnits.AntiAir):
             data.update({
@@ -1738,6 +1744,68 @@ def admin_spawn():
     else:
         return jsonify({"status": "error", "message": "unknown unit type"}), 400
 
+def spawn_supply_vehicle(from_base: LogHub.LogHub,
+                         target_unit,
+                         supply_type: LogHub.SupplyType,
+                         amount: int):
+    # clamp to what base really has
+    available = from_base.inStorage.get(supply_type, 0)
+    if available <= 0:
+        return None
+    amount = min(amount, available)
+
+    # reserve immediately (so 2 units don't over-allocate)
+    from_base.inStorage[supply_type] = available - amount
+
+    # choose icon by player (reuse what you have)
+    if from_base.player == 1:
+        image = "static/ICONS/HQ_ALLY.png"
+    else:
+        image = "static/ICONS/HQ_ENEMY.png"
+
+    veh = GroundUnits.SupplyVehicle(
+        name=f"SUP-{from_base.id}",
+        chanceToHit=0,
+        baseSpeed=40,   # ground speed, tune as needed
+        state=UAVUnits.UnitState.Idle,
+        position=(from_base.positionX, from_base.positionY),
+        image=image,
+        armourType=UAVUnits.ArmourType.Unarmored,
+        player=from_base.player,
+        cargoType=supply_type,
+        cargoAmmount=amount,
+        target_unit_id=getattr(target_unit, "id"),
+        home_base_id=from_base.id
+    )
+
+    # send it to the unit
+    veh.move_unit((target_unit.positionX, target_unit.positionY))
+
+    # and put it into the main 'units' list so the loop ticks it
+    units.append(veh)
+    return veh
+
+
+def find_nearest_loghub_with_supply(player: int,
+                                    supply_type: LogHub.SupplyType,
+                                    x: float,
+                                    y: float):
+    best_base = None
+    best_dist = None
+    for b in logBases:
+        if b.player != player:
+            continue
+        storage = getattr(b, "inStorage", {}) or {}
+        if storage.get(supply_type, 0) <= 0:
+            continue
+        dx = x - b.positionX
+        dy = y - b.positionY
+        dist = math.hypot(dx, dy)
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_base = b
+    return best_base
+
 
 def is_uav_in_comm(uav, bases, retransmitters):
     """
@@ -1824,6 +1892,17 @@ def game_loop():
 
         for aa in aaUnits:
             aa.tickAA(dt, units)
+            if aa.ammoCount <= 0 and not getattr(aa, "supplyRequested", False):
+                # try to find a base with AA ammo
+                base = find_nearest_loghub_with_supply(
+                    aa.player,
+                    aa.ammoType,
+                    aa.positionX,
+                    aa.positionY
+                )
+                if base is not None:
+                    spawn_supply_vehicle(base, aa, aa.ammoType, amount=5)  # amount to deliver
+                    aa.supplyRequested = True
 
         time.sleep(dt)
 
@@ -1858,6 +1937,56 @@ def game_loop():
                 # not in range -> keep chasing
                 # we order the LM to move toward the *current* target position
                 attacker.move_unit((target.positionX, target.positionY))
+
+        # --- supply vehicle logic ---
+        for u in list(units):  # list() so we can remove safely
+            if isinstance(u, GroundUnits.SupplyVehicle):
+                if u.phase == "to_target":
+                    # find the target
+                    target = next((x for x in units + aaUnits + logBases
+                                   if getattr(x, "id", None) == u.target_unit_id), None)
+                    if target is None:
+                        # target gone -> go back
+                        home = next((b for b in logBases if b.id == u.home_base_id), None)
+                        if home:
+                            u.move_unit((home.positionX, home.positionY))
+                            u.phase = "to_base"
+                        else:
+                            # no home, just despawn
+                            units.remove(u)
+                        continue
+
+                    # are we close enough to deliver?
+                    dx = target.positionX - u.positionX
+                    dy = target.positionY - u.positionY
+                    if math.hypot(dx, dy) < 5:   # delivery radius
+                        # deliver
+                        if hasattr(target, "ammoCount") and hasattr(target, "ammoType"):
+                            # only deliver matching type
+                            if target.ammoType == u.cargoType:
+                                target.ammoCount += u.cargoAmmount
+                                # allow next requests later
+                                setattr(target, "supplyRequested", False)
+
+                        # after delivering -> go home
+                        home = next((b for b in logBases if b.id == u.home_base_id), None)
+                        if home:
+                            u.move_unit((home.positionX, home.positionY))
+                            u.phase = "to_base"
+                        else:
+                            units.remove(u)
+
+                elif u.phase == "to_base":
+                    home = next((b for b in logBases if b.id == u.home_base_id), None)
+                    if home is None:
+                        units.remove(u)
+                        continue
+                    dx = home.positionX - u.positionX
+                    dy = home.positionY - u.positionY
+                    if math.hypot(dx, dy) < 5:
+                        # arrived -> despawn
+                        units.remove(u)
+
 
         units = [u for u in units if u.state != UAVUnits.UnitState.Destroyed]
         aaUnits = [aa for aa in aaUnits if aa.state != UAVUnits.UnitState.Destroyed]
