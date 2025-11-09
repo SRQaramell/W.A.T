@@ -111,6 +111,7 @@ PAGE_TMPL = """
             <option value="GroundRetransmitter">GroundRetransmitter</option>
             <option value="RetransmiterUAV">RetransmiterUAV</option>
             <option value="ElectronicWarfare">ElectronicWarfare</option>
+            <option value="Tank">Tank</option>
           </select>
         </label>
       </div>
@@ -1483,6 +1484,15 @@ def get_units():
                 "explosiveType": u.explosiveType.name,
             })
 
+        if isinstance(u, GroundUnits.CombatVehicle):
+            data.update({
+                "shootingRange": getattr(u, "shootingRange", None),
+                "ammoType": u.ammoType.name if hasattr(u, "ammoType") else None,
+                "ammoCount": getattr(u, "ammoCount", None),
+                "fuel": getattr(u, "currentFuel", None),
+                "maxFuel": getattr(u, "maxFuel", None)
+            })
+
         if isinstance(u, GroundUnits.SupplyVehicle):
             data.update({
                 "cargoType": u.cargoType.name,
@@ -2025,6 +2035,23 @@ def admin_spawn():
         )
         ewarUnits.append(ew)
         return jsonify({"status": "ok", "spawned": "ElectronicWarfare"})
+
+    elif unit_type == "Tank":
+        if player == 1:
+            img = "static/ICONS/TANK ALLY.png"
+        else:
+            img = "static/ICONS/TANK ENEMY.png"
+
+        tank = GroundUnits.Tank(
+            name=f"T-{len(units)}",
+            state=UAVUnits.UnitState.Idle,
+            position=(x, y),
+            image=img,
+            player=player,
+            max_fuel = 300
+        )
+        units.append(tank)
+        return jsonify({"status": "ok", "spawned": "Tank", "id": tank.id})
 
     else:
         return jsonify({"status": "error", "message": "unknown unit type"}), 400

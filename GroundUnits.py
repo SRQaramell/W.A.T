@@ -21,13 +21,11 @@ class GroundUnit(UAVUnits.Unit):
         self.fuelConsumptionPerTick = fuel_consumption_per_tick
 
     def tick_unit(self, dt: float):
-        # if we’re supposed to move, we must have fuel
+        # fuel gate for movement
         if self.state == UAVUnits.UnitState.Moving:
             if self.currentFuel <= 0:
-                # out of fuel – stop right here
                 self.state = UAVUnits.UnitState.Idle
                 return
-            # burn (per tick, not per dt — your loop is fixed-step)
             self.currentFuel -= self.fuelConsumptionPerTick
             if self.currentFuel < 0:
                 self.currentFuel = 0
@@ -71,9 +69,60 @@ class CombatVehicle(GroundUnit):
                  image: str,
                  armourType: UAVUnits.ArmourType,
                  player: int,
+                 shooting_range: float,
+                 ammo_type: SupplyType,
+                 ammo_count: int,
                  max_fuel: float = 0.0,
                  fuel_consumption_per_tick: float = 0.0):
         super().__init__(name, chanceToHit, baseSpeed, state, position, image, armourType, player,
                          max_fuel=max_fuel,
                          fuel_consumption_per_tick=fuel_consumption_per_tick)
+        # NEW combat stuff
+        self.shootingRange = shooting_range
+        self.ammoType = ammo_type
+        self.ammoCount = ammo_count
 
+    def can_shoot(self):
+        return self.ammoCount > 0
+
+    def shoot(self, target):
+        """
+        Placeholder – same idea as AA: check distance, reduce ammo.
+        You can later hook it into your game loop like AA units.
+        """
+        if self.ammoCount <= 0:
+            return False
+        # very simple distance check
+        dx = target.positionX - self.positionX
+        dy = target.positionY - self.positionY
+        dist2 = dx * dx + dy * dy
+        if dist2 <= self.shootingRange * self.shootingRange:
+            self.ammoCount -= 1
+            return True
+        return False
+
+
+class Tank(CombatVehicle):
+    def __init__(self,
+                 name: str,
+                 state: UAVUnits.UnitState,
+                 position: (int, int),
+                 image: str,
+                 player: int,
+                 max_fuel: float):
+        # sensible defaults for a tank
+        super().__init__(
+            name=name,
+            chanceToHit=60,                  # tweak
+            baseSpeed=3,                     # slower than truck
+            state=state,
+            position=position,
+            image=image,
+            armourType=UAVUnits.ArmourType.HeavyArmour,
+            player=player,
+            shooting_range=200.0,            # tank gun range in your world units
+            ammo_type=SupplyType.TanksShells,
+            ammo_count=20,
+            max_fuel=max_fuel,
+            fuel_consumption_per_tick=0.08
+        )
