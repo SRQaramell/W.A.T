@@ -25,6 +25,8 @@ class AntiAir(Unit):
     def tickAA(self, dt: float, units):
         if self.ammoCount <= 0:
             self.AAstate = AAStatus.OutOfAmmo
+            self.target = None
+            self.currentAimTime = 0.0
             return
         if self.AAstate == AAStatus.Idle:
             targets = self.scanForTarget(units)

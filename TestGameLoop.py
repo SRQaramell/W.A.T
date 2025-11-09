@@ -918,6 +918,23 @@ PAGE_TMPL = """
           ctx.fill();
         }
 
+        if (u.unit_class === "AntiAir" && u.aa_target && Array.isArray(u.aa_target)) {
+          const [tx, ty] = u.aa_target;
+          // draw only if the target is not exactly on top (to avoid tiny line)
+          const dist = Math.hypot(tx - u.x, ty - u.y);
+          if (dist > 2) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(u.x, u.y);
+            ctx.lineTo(tx, ty);
+            ctx.strokeStyle = "rgba(255, 0, 0, 0.8)"; // red
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]); // solid
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+
         // 2) draw transmission range for bases and ground retransmitters (toggable)
         if (showTransmission && u.transmissionRange) {
           if (
@@ -1127,6 +1144,12 @@ def get_units():
                 "aa_state": u.AAstate.name,
                 "ammo": u.ammoCount
             })
+            if u.target is not None:
+                data["aa_target"] = [u.target.positionX, u.target.positionY]
+                data["aa_target_name"] = getattr(u.target, "name", "Unknown")
+            else:
+                data["aa_target"] = None
+                data["aa_target_name"] = None
 
         # extra fields for LogHub (the bases)
         if isinstance(u, LogHub.LogHub):
