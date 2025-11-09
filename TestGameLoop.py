@@ -1727,7 +1727,7 @@ def spawn_uav():
     lm = UAVUnits.LoiteringMunition(
         name=f"LM-{base.id}-{current_uavs+1}",
         chanceToHit=50,
-        baseSpeed=55,
+        baseSpeed=20,
         state=UAVUnits.UnitState.Idle,
         position=(base.positionX, base.positionY),
         image="static/ICONS/UAV ALLY.png",
@@ -1782,7 +1782,7 @@ def spawn_retrans_uav():
     ruav = UAVUnits.RetransmiterUAV(
         name=f"RT-UAV-{base.id}-{current_air+1}",
         chanceToHit=0,
-        baseSpeed=55,
+        baseSpeed=15,
         state=UAVUnits.UnitState.Idle,
         position=(base.positionX, base.positionY),
         image="static/ICONS/ROTOR ALLY.png",
@@ -1901,7 +1901,7 @@ def admin_spawn():
         lm = UAVUnits.LoiteringMunition(
             name=f"LM-admin-{len(units)}",
             chanceToHit=50,
-            baseSpeed=55,
+            baseSpeed=20,
             state=UAVUnits.UnitState.Landed,
             position=(x, y),
             image=img,
@@ -1986,7 +1986,7 @@ def admin_spawn():
         ruav = UAVUnits.RetransmiterUAV(
             name=f"RT-UAV-admin-{len(units)}",
             chanceToHit=0,
-            baseSpeed=55,
+            baseSpeed=15,
             state=UAVUnits.UnitState.Landed,
             position=(x, y),
             image=img,
@@ -2054,7 +2054,7 @@ def spawn_supply_vehicle(from_base: LogHub.LogHub,
     veh = GroundUnits.SupplyVehicle(
         name=f"SUP-{from_base.id}",
         chanceToHit=0,
-        baseSpeed=10,
+        baseSpeed=5,
         state=UAVUnits.UnitState.Idle,
         position=(from_base.positionX, from_base.positionY),
         image=image,
