@@ -292,6 +292,9 @@ PAGE_TMPL = """
     let spawnUavBaseId = null;
     let spawnUavBaseData = null;
 
+    let hoveredTargetId = null;
+    let hoveredTargetChance = null;
+
     let spawnRtUavMode = false;
     let spawnRtUavBaseId = null;
     let spawnRtUavBaseData = null;
@@ -307,6 +310,44 @@ PAGE_TMPL = """
     let selectedUnitId = null;
     let selectedUnitSnapshot = null;
     let moveTarget = null;      // { x:…, y:… } or null
+
+    // mirror of Python enums
+    const ArmourTypeIdx = {
+      "HeavyArmour": 0,
+      "LightArmour": 1,
+      "Unarmored": 2,
+      "Infantry": 3
+    };
+    
+    const ExplosiveTypeIdx = {
+      "HE_FRAG": 0,
+      "HEAT": 1,
+      "FAE": 2
+    };
+    
+    // same as UAVUnits.ExplosiveArmourTable
+    const ExplosiveArmourTable = [
+      [-80,  20, -90],  // Heavy
+      [-10, -30, -20],  // Light
+      [ 30,  30,  40],  // None / Unarmored
+      [ 50, -10,  60]   // Infantry
+    ];
+    
+    // helper: compute chance like Python does in isHit()
+    function calcLmDestroyChance(attacker, target) {
+      if (!attacker || !target) return null;
+      if (!attacker.explosiveType) return null;
+      if (!target.armourType) return null;
+    
+      const armourIdx = ArmourTypeIdx[target.armourType];
+      const explIdx   = ExplosiveTypeIdx[attacker.explosiveType];
+      if (armourIdx == null || explIdx == null) return null;
+    
+      const base = attacker.chanceToHit || 0;
+      const bonus = ExplosiveArmourTable[armourIdx][explIdx] || 0;
+      return base + bonus;
+    }
+
 
     function startRetransmitterPlacing(baseId, baseData) {
       placeRetransmitterMode = true;
@@ -466,8 +507,7 @@ PAGE_TMPL = """
         
             return; // stop normal click handling
           }
-
-    // ADMIN PLACE?
+        // ADMIN PLACE?
         if (adminPlaceMode) {
           
             const payload = {
@@ -688,6 +728,50 @@ PAGE_TMPL = """
           moveTarget = { x: clickX, y: clickY };
         }
 
+    });
+    
+    canvas.addEventListener("mousemove", (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const mx = (event.clientX - rect.left) * scaleX;
+      const my = (event.clientY - rect.top)  * scaleY;
+    
+      // reset by default
+      let newHoveredId = null;
+      let newHoveredChance = null;
+    
+      // do we have LM selected?
+      const selected = (selectedUnitId !== null)
+        ? units.find(u => u.id === selectedUnitId)
+        : null;
+    
+      // only if selected unit is LM
+      if (selected && selected.unit_class === "LoiteringMunition") {
+        // find unit under mouse
+        for (const u of units) {
+          const size = u.size || 24;
+          const half = size / 2;
+          if (
+            mx >= u.x - half && mx <= u.x + half &&
+            my >= u.y - half && my <= u.y + half
+          ) {
+            // must be enemy
+            if (u.player !== selected.player) {
+              const chance = calcLmDestroyChance(selected, u);
+              if (chance != null) {
+                newHoveredId = u.id;
+                newHoveredChance = chance;
+              }
+            }
+            break; // stop after first hit
+          }
+        }
+      }
+    
+      // update globals (this will be used in drawUnits)
+      hoveredTargetId = newHoveredId;
+      hoveredTargetChance = newHoveredChance;
     });
     
     document.addEventListener("keydown", (e) => {
@@ -1094,6 +1178,25 @@ PAGE_TMPL = """
           ctx.stroke();
         }
         
+        if (u.id === hoveredTargetId && hoveredTargetChance != null) {
+          ctx.save();
+          ctx.font = "13px sans-serif";
+          ctx.textAlign = "center";
+        
+          const text = `Destroy: ${hoveredTargetChance}%`;
+        
+          // outline so it's readable on icons
+          ctx.strokeStyle = "black";
+          ctx.lineWidth = 3;
+          ctx.strokeText(text, u.x, u.y + (size / 2) + 14);
+        
+          // actual white text
+          ctx.fillStyle = "white";
+          ctx.fillText(text, u.x, u.y + (size / 2) + 14);
+        
+          ctx.restore();
+        }
+        
       }
 
       if (moveTarget) {
@@ -1226,6 +1329,7 @@ def get_units():
             data.update({
                 "cargoType": u.cargoType.name,
                 "cargoAmmount": u.cargoAmmount,
+                "armourType": u.armourType.name
             })
 
         # extra fields for AntiAir
